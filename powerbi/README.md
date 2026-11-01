@@ -28,7 +28,7 @@ Mark `dim_date` as the date table. Filter `dim_date[is_full_fy] = TRUE` on yearl
 
 ## 4. Measures and theme
 - **Modeling › New table** `_Measures = {0}` → paste the measures from `measures.dax` one by one.
-- **View › Themes › Browse** → `Cottonil_theme.json` (blue = main, grey = context, orange = the one thing to look at).
+- **View › Themes › Browse** → `Cottonil_theme.json` (three colours: navy = main, light grey = context, teal = the one thing to look at).
 
 ## 5. Pages (same story as the Streamlit dashboard)
 1. Executive – KPIs, monthly sales vs profit, Real Growth % (pieces) vs Price Growth %.

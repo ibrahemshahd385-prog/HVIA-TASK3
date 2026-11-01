@@ -1,216 +1,298 @@
 """
-The content of the Decision Hub: the problems (with live evidence), the decisions of the month,
-the starter action list, and the assistant that answers from the data.
-Every number here is read from M (computed by core/) – nothing is typed by hand.
+What the manager board says in words: the alerts on the Today page, the month's cycle, and «خيط» – the assistant.
+Every sentence is built from the numbers in core/, so it changes when the data changes.
 """
 import re
 
 import pandas as pd
 
-PROBLEMS = [
-    {'id': 'P01', 'area': 'Sales', 'owner': 'ceo', 'tool': 'discount'},
-    {'id': 'P02', 'area': 'Marketing', 'owner': 'marketing', 'tool': 'marketing'},
-    {'id': 'P03', 'area': 'Supply chain', 'owner': 'supply', 'tool': 'allocation'},
-    {'id': 'P04', 'area': 'Supply chain', 'owner': 'supply', 'tool': 'purchase'},
-    {'id': 'P05', 'area': 'Finance', 'owner': 'finance', 'tool': 'gaps'},
-    {'id': 'P06', 'area': 'Strategy', 'owner': 'ceo', 'tool': 'home'},
-    {'id': 'P07', 'area': 'Customers', 'owner': 'marketing', 'tool': 'gaps'},
-    {'id': 'P08', 'area': 'E-commerce', 'owner': 'finance', 'tool': 'shipping'},
-    {'id': 'P09', 'area': 'HR', 'owner': 'finance', 'tool': 'gaps'},
-    {'id': 'P10', 'area': 'Operations', 'owner': 'supply', 'tool': 'gaps'},
-]
+from core import forecast as F
+from core import manager as MG
+
+CAT_AR = {
+    'Socks': 'الشرابات', 'Men tops': 'تيشيرتات رجالي', 'Men boxers': 'بوكسرات رجالي', 'Women tops': 'تيشيرتات حريمي', 'Kids underwear': 'داخلي أطفال',
+    'Men underwear': 'داخلي رجالي', 'Women underwear': 'داخلي حريمي', 'Girls underwear': 'داخلي بناتي', 'Women bras': 'برا حريمي',
+    'Home textiles': 'مفروشات', 'Accessories': 'إكسسوارات', 'Men bottoms': 'بناطيل رجالي', 'Women bottoms': 'بناطيل حريمي',
+    'Women pajamas': 'بيجامات حريمي', 'Boys pajamas': 'بيجامات ولادي', 'Girls pajamas': 'بيجامات بناتي',
+}
+ROLE_AR = {'Store Manager': 'مدير فرع', 'Cashier': 'كاشير', 'Sales Associate': 'بائع', 'Inventory Clerk': 'أمين مخزن', 'Area Manager': 'مدير منطقة'}
+MONTH_AR = {1: 'يناير', 2: 'فبراير', 3: 'مارس', 4: 'أبريل', 5: 'مايو', 6: 'يونيو', 7: 'يوليو', 8: 'أغسطس', 9: 'سبتمبر', 10: 'أكتوبر', 11: 'نوفمبر', 12: 'ديسمبر'}
 
 
-def _m(x):
-    return f'{x / 1e6:,.1f}M'
+def _m(v):
+    return f'{v / 1e6:,.1f}M' if abs(v) >= 1e6 else f'{v / 1e3:,.0f}K'
 
 
-def problems(M):
-    d, b, tf, sf, pf, mk, g, cf, sh, pe, fy = (M['discount'], M['bridge'], M['transfers'], M['stock'], M['purchasing'], M['marketing'],
-                                                 M['gov'], M['customers'], M['shipping'], M['people'], M['fy'])
-    act = b['actions'].set_index('action').profit
-    mix = M['mix']
-    src = sf['source_mix']
-    claimed = mk.claimed.sum() / mk.real_orders.sum()
-    plan_total = next_q(M).units.sum()
-    txt = {
-        'P01': dict(
-            title=('Discounts are random and sell no extra pieces', 'الخصومات عشوائية ومش بتبيع قطع زيادة'),
-            evidence=(f"{d['share_lines']:.0f}% of lines are discounted in every month and channel; they sell {d['pieces_with']:.2f} pieces vs {d['pieces_without']:.2f}. Margin {d['margin_without']:.1f}% → {d['margin_with']:.1f}%. FY2026: {_m(d['discount_fy26'])} EGP given away.",
-                      f"{d['share_lines']:.0f}% من السطور عليها خصم في كل شهر وكل قناة؛ وبتبيع {d['pieces_with']:.2f} قطعة مقابل {d['pieces_without']:.2f}. الهامش {d['margin_without']:.1f}% ← {d['margin_with']:.1f}%. في FY2026 راح {_m(d['discount_fy26'])} جنيه."),
-            cause=('No discount policy: the discount is not tied to a goal (season, clearance, loyalty).', 'مفيش سياسة خصم: الخصم مش مربوط بهدف (موسم، تصفية، ولاء).'),
-            solution=('Discount guardrail: max 10% without approval, never below a 30% margin; discounts only as planned campaigns with a control group.',
-                      'قواعد للخصم: أقصى 10% من غير موافقة، ومنزلش تحت هامش 30%؛ والخصم يبقى في حملات مخططة فيها مجموعة مقارنة.'),
-            impact=act.get('Stop random discounts', 0)),
-        'P02': dict(
-            title=('Marketing budget is fixed and not linked to demand', 'ميزانية التسويق ثابتة ومش مربوطة بالطلب'),
-            evidence=(f"Campaigns claim ×{claimed:.0f} the real orders; spend ↔ orders by governorate ≈ {g[['spend', 'orders']].corr().iloc[0, 1]:.2f}. {g.index[0]} has {g.order_share.iloc[0]:.0f}% of orders and {g.spend_share.iloc[0]:.1f}% of spend.",
-                      f"الحملات بتنسب لنفسها ×{claimed:.0f} الطلبات الحقيقية؛ والارتباط بين الصرف والطلبات لكل محافظة حوالي {g[['spend', 'orders']].corr().iloc[0, 1]:.2f}. {g.index[0]} عندها {g.order_share.iloc[0]:.0f}% من الطلبات و {g.spend_share.iloc[0]:.1f}% من الصرف."),
-            cause=('Budget split equally by channel and governorate; success measured by platform-claimed orders.', 'الميزانية متقسمة بالتساوي على القنوات والمحافظات؛ والنجاح بيتقاس بالطلبات اللي المنصات بتنسبها لنفسها.'),
-            solution=('Holdout tests (pause ads in matched governorates 4 weeks), budget follows demand, one marketing ledger, cut spend that shows no effect.',
-                      'تجارب Holdout (نوقف الإعلان في محافظات شبه بعض 4 أسابيع)، والميزانية تمشي مع الطلب، ودفتر واحد للتسويق، ونقلل الصرف اللي ملوش أثر.'),
-            impact=act.get('Cut marketing with no measured effect', 0)),
-        'P03': dict(
-            title=('Branches receive a fixed quantity, not what they sell', 'الفروع بتستلم كمية ثابتة مش اللي بتبيعه'),
-            evidence=(f"FY2026: ×{tf.ratio.iloc[-1]:.1f} of sales sent; socks {mix.loc['Socks', 'sent_pct']:.0f}% of shipments vs {mix.loc['Socks', 'sold_pct']:.0f}% of sales; {src.get('Raw materials', 0) + src.get('Returns', 0):.0f}% shipped from raw-material/returns warehouses; every branch served by all 12 warehouses.",
-                      f"في FY2026 اتبعت ×{tf.ratio.iloc[-1]:.1f} من البيع؛ الشرابات {mix.loc['Socks', 'sent_pct']:.0f}% من المبعوت مقابل {mix.loc['Socks', 'sold_pct']:.0f}% من البيع؛ و {src.get('Raw materials', 0) + src.get('Returns', 0):.0f}% طالع من مخزن الخامات والمرتجعات؛ وكل فرع بيستلم من الـ 12 مخزن."),
-            cause=('Allocation is a fixed rule per SKU, not driven by sales.', 'التوزيع قاعدة ثابتة لكل SKU، مش ماشي مع البيع.'),
-            solution=('Monthly allocation from the AI forecast (branch share × forecast + safety), from the nearest distribution centre only.',
-                      'توزيع شهري من توقّع الـ AI (نصيب الفرع × التوقّع + أمان)، ومن أقرب مخزن توزيع بس.'),
-            impact=act.get('Demand-based allocation to branches', 0)),
-        'P04': dict(
-            title=('Purchasing is fixed (~42M pieces a year) and ignores sales', 'الشراء ثابت (حوالي 42 مليون قطعة في السنة) ومش بيبص على البيع'),
-            evidence=(f"FY2026: {pf.bought.iloc[-1] / 1e6:.0f}M pieces bought for {pf.sold.iloc[-1] / 1e3:,.0f}K sold (×{pf.ratio.iloc[-1]:.0f}); correlation per SKU ≈ 0.01. The AI forecast needs {plan_total / 1e3:,.0f}K pieces next quarter.",
-                      f"في FY2026 اتشرى {pf.bought.iloc[-1] / 1e6:.0f} مليون قطعة مقابل {pf.sold.iloc[-1] / 1e3:,.0f} ألف اتباعت (×{pf.ratio.iloc[-1]:.0f})؛ والارتباط لكل SKU حوالي 0.01. وتوقّع الـ AI محتاج {plan_total / 1e3:,.0f} ألف قطعة الربع الجاي."),
-            cause=('Same quantity per SKU and per year, whatever demand does (or the PO unit is not "piece").', 'نفس الكمية لكل SKU وكل سنة مهما الطلب عمل (أو وحدة أمر الشراء مش قطعة).'),
-            solution=('Buy from the forecast: 3-month forecast + safety stock − confirmed stock; confirm the PO unit with the company first.',
-                      'نشتري من التوقّع: توقّع 3 شهور + مخزون أمان − المخزون المؤكد؛ ونتأكد من وحدة أمر الشراء مع الشركة الأول.'),
-            impact=0),
-        'P05': dict(
-            title=('9.3M pieces sent to branches are not accounted for', '9.3 مليون قطعة اتبعتت للفروع ومش متحسوبة'),
-            evidence=(f"Start stock + received + returns − sold − end stock = {sf['unaccounted'] / 1e6:.1f}M pieces. Stock is flat for 8 years ({sf['months_cover']:.0f} months of sales, {_m(sf['stock_value'])} EGP).",
-                      f"رصيد البداية + المستلم + المرتجع − المتباع − رصيد النهاية = {sf['unaccounted'] / 1e6:.1f} مليون قطعة. والمخزون ثابت 8 سنين ({sf['months_cover']:.0f} شهر بيع، {_m(sf['stock_value'])} جنيه)."),
-            cause=('Transfers or stock counts are recorded wrongly, or pieces are lost (shrinkage).', 'التحويلات أو الجرد متسجلين غلط، أو فيه قطع بتضيع (عجز).'),
-            solution=('Physical count in 5 branches this month; scan transfer receipts at the branch; then decide (data fix vs loss prevention).',
-                      'جرد فعلي في 5 فروع الشهر ده؛ وتسجيل استلام التحويلات بالباركود في الفرع؛ وبعدين نقرر (تصليح داتا ولا منع فقد).'),
-            impact=0),
-        'P06': dict(
-            title=('Growth is mostly price; real growth is slowing', 'النمو أغلبه أسعار؛ والنمو الحقيقي بيبطّأ'),
-            evidence=(f"FY2026 sales {fy.net_sales_g.iloc[-1]:+.0f}% = pieces {fy.units_g.iloc[-1]:+.1f}% + price per piece {fy.price_per_unit_g.iloc[-1]:+.0f}%. Since FY2019: sales ×{fy.net_sales.iloc[-1] / fy.net_sales.iloc[0]:.0f}, pieces ×{fy.units.iloc[-1] / fy.units.iloc[0]:.1f}.",
-                      f"مبيعات FY2026 {fy.net_sales_g.iloc[-1]:+.0f}% = قطع {fy.units_g.iloc[-1]:+.1f}% + سعر القطعة {fy.price_per_unit_g.iloc[-1]:+.0f}%. ومن FY2019: المبيعات ×{fy.net_sales.iloc[-1] / fy.net_sales.iloc[0]:.0f}، والقطع ×{fy.units.iloc[-1] / fy.units.iloc[0]:.1f}."),
-            cause=('Inflation lifts sales in EGP; volume growth fell from +16% to +9%.', 'التضخم بيرفع المبيعات بالجنيه؛ ونمو الكميات نزل من 16% لـ 9%.'),
-            solution=('Manage on pieces and gross profit, not EGP sales; plan stock and staff for the real peaks (Nov–Dec, Mar–May, Thu–Sat).',
-                      'نقيس بالقطع وإجمالي الربح مش بالمبيعات بالجنيه؛ ونجهّز المخزون والناس للمواسم الحقيقية (نوفمبر–ديسمبر، مارس–مايو، الخميس للسبت).'),
-            impact=0),
-        'P07': dict(
-            title=('Customer identity is too weak for loyalty or churn', 'هوية العميل أضعف من إننا نبني عليها ولاء أو توقّع'),
-            evidence=(f"{cf['guest_share']:.0f}% of orders have no customer (even online); a 5+ visit customer shops in {cf['loyal_branches']:.1f} branches; {cf['wholesale_by_retail_customers']:.0f}% of wholesale orders come from 'retail' customers. Churn model AUC {M['churn']['auc_model']:.2f} → rejected.",
-                      f"{cf['guest_share']:.0f}% من الطلبات من غير عميل (حتى الأونلاين)؛ العميل اللي زار 5 مرات بيشتري من {cf['loyal_branches']:.1f} فرع؛ و {cf['wholesale_by_retail_customers']:.0f}% من طلبات الجملة من عملاء 'قطاعي'. موديل الـ churn جاب AUC {M['churn']['auc_model']:.2f} → اترفض."),
-            cause=('No loyalty ID at the till; reseller flag not used.', 'مفيش كود ولاء عند الكاشير؛ وعلامة التاجر مش مستخدمة.'),
-            solution=('Phone number as loyalty ID everywhere; reseller flag; win-back offers only as test vs control (list ready to download).',
-                      'رقم الموبايل ككود ولاء في كل مكان؛ وعلامة للتاجر؛ وعروض الاسترجاع تبقى تجربة بمجموعة مقارنة (القايمة جاهزة للتحميل).'),
-            impact=0),
-        'P08': dict(
-            title=('Free shipping is given at random', 'الشحن المجاني بيتدّى بالقرعة'),
-            evidence=(f"{sh['free_share']:.0f}% of shipments are free in every order size, even the smallest.", f"{sh['free_share']:.0f}% من الشحنات مجانية في كل أحجام الطلبات، حتى أصغرها."),
-            cause=('No minimum order rule for free shipping.', 'مفيش حد أدنى للطلب عشان الشحن يبقى مجاني.'),
-            solution=('Free shipping only above a minimum order (e.g. 1,000 EGP).', 'شحن مجاني بس فوق حد أدنى للطلب (مثلًا 1,000 جنيه).'),
-            impact=act.get('Free shipping only above a minimum order', 0)),
-        'P09': dict(
-            title=('HR and payroll data cannot support workforce decisions', 'داتا الموظفين والمرتبات متنفعش لقرارات الموظفين'),
-            evidence=(f"{pe['no_manager']} branches without a store manager, {pe['no_cashier']} without a cashier; payroll covers at most {pe['paid_per_month'].max()} of {pe['employees']} people; salary does not depend on the role.",
-                      f"{pe['no_manager']} فرع من غير مدير، و {pe['no_cashier']} من غير كاشير؛ والمرتبات بتغطي {pe['paid_per_month'].max()} من {pe['employees']} بالكتير؛ والمرتب مالوش علاقة بالوظيفة."),
-            cause=('Roles assigned in rotation in the HR table; payroll export incomplete.', 'الوظايف متوزعة بالتناوب في جدول الموظفين؛ وملف المرتبات ناقص.'),
-            solution=('Get the real org chart and the full payroll before any productivity KPI.', 'نجيب الهيكل الحقيقي والمرتبات كاملة قبل أي مؤشر إنتاجية.'),
-            impact=0),
-        'P10': dict(
-            title=('Several operational fields are random', 'حقول تشغيل كتير عشوائية'),
-            evidence=('Delivery time 1–7 days equally everywhere (Cairo = Aswan); "Delayed" 3% whatever the days; "In transit" and "Partial receipt" never close; return reasons exactly 20% each.',
-                      'مدة التوصيل من 1 لـ 7 أيام بالتساوي في كل حتة (القاهرة = أسوان)؛ و"متأخر" 3% مهما كانت الأيام؛ و"في الطريق" و"استلام جزئي" عمرهم ما بيتقفلوا؛ وأسباب المرتجع 20% بالظبط لكل سبب.'),
-            cause=('Fields filled without a real process behind them.', 'حقول بتتملي من غير عملية حقيقية وراها.'),
-            solution=('Carrier scan dates, closing statuses, a return-reason form. No KPI on these fields until then.', 'تواريخ من شركات الشحن، وقفل الحالات، وفورم لسبب المرتجع. ومفيش مؤشرات على الحقول دي لحد ساعتها.'),
-            impact=0),
-    }
-    out = []
-    for p in PROBLEMS:
-        x = txt[p['id']]
-        out.append({**p, 'title': x['title'][0], 'title_ar': x['title'][1], 'evidence': x['evidence'][0], 'evidence_ar': x['evidence'][1],
-                    'cause': x['cause'][0], 'cause_ar': x['cause'][1], 'solution': x['solution'][0], 'solution_ar': x['solution'][1], 'impact': float(x['impact'])})
+def _k(v):
+    return f'{v / 1e3:,.0f}K' if abs(v) >= 1e3 else f'{v:,.0f}'
+
+
+def _ark(v):
+    return f'{v / 1e3:,.0f} ألف' if abs(v) >= 1e3 else f'{v:,.0f}'
+
+
+def _ar_m(v):
+    return f'{v / 1e6:,.1f} مليون' if abs(v) >= 1e6 else f'{v / 1e3:,.0f} ألف'
+
+
+def month_name(ts, ar):
+    ts = pd.Timestamp(ts)
+    return f'{MONTH_AR[ts.month]} {ts.year}' if ar else ts.strftime('%b %Y')
+
+
+# ---------------------------------------------------------------- Today: alerts from the data
+def alerts(M, s):
+    start, fq = F.next_months(M['forecast'])
+    nov = fq[fq.month == start].units.sum()
+    se, st, d, g, pp = M['season'], M['stock'], M['discount'], M['gov'], M['people']
+    br = M['base']['branches']
+    dist = MG.distribution(M['base'], M['forecast'])['totals']
+    top_gap = br.sort_values('stock_gap', ascending=False).head(3).branch_name_ar.tolist()
+    m1, m2 = start.month, (start + pd.DateOffset(months=1)).month
+    cairo = g.iloc[0]
+    out = [
+        {'id': 'season', 'icon': 'calendar', 'level': 'info',
+         'en': f"{start.strftime('%B')} and {(start + pd.DateOffset(months=1)).strftime('%B')} are peak months ({se.loc[m1]:+.0f}% and {se.loc[m2]:+.0f}% vs a normal month)",
+         'ar': f'{MONTH_AR[m1]} و{MONTH_AR[m2]} من أعلى شهور السنة ({se.loc[m1]:+.0f}% و {se.loc[m2]:+.0f}% عن الشهر العادي)',
+         'sub_en': f'Expected demand: {_k(nov)} pieces in {month_name(start, False)}, {_k(fq.units.sum())} for the quarter.',
+         'sub_ar': f'الطلب المتوقع: {_ark(nov)} قطعة في {MONTH_AR[m1]}، و {_ark(fq.units.sum())} للربع كله.', 'link': '#/purchase'},
+        {'id': 'alloc', 'icon': 'truck', 'level': 'watch',
+         'en': f'Branches need ~{_k(dist["send"])} pieces next month; the usual monthly shipment is {_k(dist["old"])}',
+         'ar': f'الفروع محتاجة حوالي {_ark(dist["send"])} قطعة الشهر الجاي، والمعتاد إننا بنبعت {_ark(dist["old"])} في الشهر',
+         'sub_en': f'≈{dist["trips_old"] - dist["trips_new"]:,.0f} fewer trips and {_m(dist["transport_saved_month"])} EGP transport a month.',
+         'sub_ar': f'يعني حوالي {dist["trips_old"] - dist["trips_new"]:,.0f} نقلة أقل و {_ar_m(dist["transport_saved_month"])} جنيه نقل في الشهر.', 'link': '#/distribution'},
+        {'id': 'stock', 'icon': 'box', 'level': 'watch',
+         'en': f'{st["unaccounted"] / 1e6:.1f}M pieces sent to branches are neither sold nor on the shelf',
+         'ar': f'{st["unaccounted"] / 1e6:.1f} مليون قطعة اتبعتت للفروع ومش ظاهرة لا في البيع ولا في المخزون',
+         'sub_en': f'Largest gaps: {", ".join(top_gap)}. A physical count in 5 branches tells which record is wrong.',
+         'sub_ar': f'أكبر فرق: {"، ".join(top_gap)}. جرد فعلي في 5 فروع هيقول أنهي سجل الغلط.', 'link': '#/branches?sort=gap'},
+        {'id': 'discount', 'icon': 'tag', 'level': 'watch',
+         'en': f'{d["share_lines"]:.0f}% of sales lines carry a discount, with the same pieces per line ({d["pieces_with"]:.2f} vs {d["pieces_without"]:.2f})',
+         'ar': f'{d["share_lines"]:.0f}% من سطور البيع عليها خصم، ونفس عدد القطع في السطر ({d["pieces_with"]:.2f} مقابل {d["pieces_without"]:.2f})',
+         'sub_en': f'FY2026 discounts: {_m(d["discount_fy26"])} EGP. Margin {d["margin_without"]:.1f}% without a discount, {d["margin_with"]:.1f}% with.',
+         'sub_ar': f'خصومات FY2026: {_ar_m(d["discount_fy26"])} جنيه. الهامش {d["margin_without"]:.1f}% من غير خصم و {d["margin_with"]:.1f}% بالخصم.', 'link': '#/pricing'},
+        {'id': 'marketing', 'icon': 'megaphone', 'level': 'info',
+         'en': f'{cairo.name}: {cairo.order_share:.0f}% of orders and {cairo.spend_share:.1f}% of marketing spend',
+         'ar': f'{cairo.name}: {cairo.order_share:.0f}% من الطلبات و {cairo.spend_share:.1f}% بس من صرف التسويق',
+         'sub_en': 'Spend and orders by governorate are unrelated – the monthly budget can follow demand.',
+         'sub_ar': 'الصرف والطلبات في المحافظات مالهمش علاقة ببعض – ميزانية الشهر ممكن تمشي مع الطلب.', 'link': '#/marketing'},
+        {'id': 'people', 'icon': 'people', 'level': 'info',
+         'en': f'{pp["no_manager"]} branches have no store manager and {pp["no_cashier"]} have no cashier in the staff file',
+         'ar': f'{pp["no_manager"]} فرع مالهمش مدير فرع و {pp["no_cashier"]} مالهمش كاشير في ملف الموظفين',
+         'sub_en': 'Worth confirming with HR before any staffing decision.', 'sub_ar': 'محتاج نتأكد مع الـ HR قبل أي قرار في الموظفين.', 'link': '#/branches?flag=no_manager'},
+    ]
     return out
 
 
-STARTER_ACTIONS = [
-    {'title': 'Freeze random discounts – apply the guardrail (max 10%, floor margin 30%)', 'owner': 'ceo', 'due': '2026-11-15', 'status': 'To do', 'problem': 'P01', 'impact': 9.77e6},
-    {'title': 'Physical stock count in 5 branches', 'owner': 'finance', 'due': '2026-11-20', 'status': 'To do', 'problem': 'P05', 'impact': 0},
-    {'title': 'Approve the Nov–Jan purchase plan from the AI forecast', 'owner': 'supply', 'due': '2026-11-10', 'status': 'To do', 'problem': 'P04', 'impact': 0},
-    {'title': 'Switch December allocation to the demand-based plan', 'owner': 'supply', 'due': '2026-11-25', 'status': 'To do', 'problem': 'P03', 'impact': 1.9e6},
-    {'title': 'Launch a 4-week marketing holdout in 4 governorate pairs', 'owner': 'marketing', 'due': '2026-12-01', 'status': 'To do', 'problem': 'P02', 'impact': 7.21e6},
-    {'title': 'Phone number as loyalty ID at every till', 'owner': 'marketing', 'due': '2026-12-15', 'status': 'To do', 'problem': 'P07', 'impact': 0},
-    {'title': 'Free shipping only above 1,000 EGP', 'owner': 'finance', 'due': '2026-11-30', 'status': 'To do', 'problem': 'P08', 'impact': 5.8e4},
-    {'title': 'Ask the company: purchase-order unit, real org chart, full payroll', 'owner': 'ceo', 'due': '2026-11-08', 'status': 'In progress', 'problem': 'P09', 'impact': 0},
-]
-
-
-def next_q(M):
-    fc = M['forecast']
-    start = fc.month.min() + pd.DateOffset(months=1)
-    return fc[(fc.month >= start) & (fc.month < start + pd.DateOffset(months=3))]
-
-
-def decisions(M):
-    fq = next_q(M)
-    nov = fq[fq.month == fq.month.min()].units.sum()
-    d, b = M['discount'], M['bridge']
-    act = b['actions'].set_index('action').profit
-    s = M['season']
-    return [
-        {'title': f'Buy for demand: ~{fq.units.sum() / 1e3:,.0f}K pieces for Nov–Jan, not ~10.5M', 'title_ar': f'نشتري على قد الطلب: حوالي {fq.units.sum() / 1e3:,.0f} ألف قطعة لنوفمبر–يناير، مش 10.5 مليون', 'owner': 'Supply chain', 'link': 'purchase'},
-        {'title': f'Send branches ~{nov / 1e3:,.0f}K pieces in November, by category demand', 'title_ar': f'نبعت للفروع حوالي {nov / 1e3:,.0f} ألف قطعة في نوفمبر، حسب طلب كل فئة', 'owner': 'Supply chain', 'link': 'allocation'},
-        {'title': f'Freeze random discounts: +{act.get("Stop random discounts", 0) / 1e6:.1f}M EGP a year', 'title_ar': f'نوقف الخصم العشوائي: +{act.get("Stop random discounts", 0) / 1e6:.1f} مليون جنيه في السنة', 'owner': 'CEO / Sales', 'link': 'discount'},
-        {'title': f'Start the marketing holdout test: +{act.get("Cut marketing with no measured effect", 0) / 1e6:.1f}M EGP a year at stake', 'title_ar': f'نبدأ تجربة الـ Holdout في التسويق: +{act.get("Cut marketing with no measured effect", 0) / 1e6:.1f} مليون جنيه في السنة', 'owner': 'Marketing', 'link': 'marketing'},
-        {'title': 'Count stock in 5 branches: 9.3M pieces not accounted for', 'title_ar': 'جرد في 5 فروع: 9.3 مليون قطعة مش متحسوبة', 'owner': 'Finance', 'link': 'problems'},
-        {'title': f'Peak season ahead: Nov {s.loc[11]:+.0f}% and Dec {s.loc[12]:+.0f}% vs a normal month', 'title_ar': f'الموسم جاي: نوفمبر {s.loc[11]:+.0f}% وديسمبر {s.loc[12]:+.0f}% عن الشهر العادي', 'owner': 'CEO', 'link': 'home'},
+# ---------------------------------------------------------------- Today: the month's cycle
+def cycle(M, s):
+    month = M['window'].strftime('%Y-%m')
+    start, fq = F.next_months(M['forecast'])
+    win = f"{start.strftime('%Y-%m')}..{(start + pd.DateOffset(months=2)).strftime('%Y-%m')}"
+    checks = s.get('checks', {}).get(month, {})
+    pur = next((p for p in s.get('purchase', []) if p.get('window') == win), None)
+    dis = next((p for p in s.get('distribution', []) if p.get('month') == month), None)
+    mkt = next((p for p in s.get('marketing', []) if p.get('month') == month), None)
+    pol = s.get('policy')
+    top5 = M['base']['branches'].sort_values('stock_gap', ascending=False).head(5).branch_name_ar.tolist()
+    m_en, m_ar = month_name(start, False), MONTH_AR[start.month]
+    items = [
+        {'id': 'purchase', 'auto': True, 'done': bool(pur), 'when': pur and pur['saved'], 'link': '#/purchase',
+         'en': f'Purchase plan for {m_en} – {month_name(start + pd.DateOffset(months=2), False)}', 'ar': f'خطة الشراء من {m_ar} لـ {MONTH_AR[(start + pd.DateOffset(months=2)).month]}',
+         'hint_en': f'{_ark(fq.units.sum())} pieces expected', 'hint_ar': f'الطلب المتوقع {_ark(fq.units.sum())} قطعة'},
+        {'id': 'distribution', 'auto': True, 'done': bool(dis), 'when': dis and dis['saved'], 'link': '#/distribution',
+         'en': f'Distribution plan for {m_en}', 'ar': f'خطة توزيع {m_ar}', 'hint_en': '80 branches, from the nearest warehouse', 'hint_ar': '80 فرع، كل فرع من أقرب مخزن'},
+        {'id': 'policy', 'auto': True, 'done': bool(pol), 'when': pol and pol.get('saved'), 'link': '#/pricing',
+         'en': 'Discount policy for the season', 'ar': 'سياسة الخصم للموسم', 'hint_en': 'max discount and floor margin', 'hint_ar': 'أقصى خصم وأقل هامش'},
+        {'id': 'marketing', 'auto': True, 'done': bool(mkt), 'when': mkt and mkt['saved'], 'link': '#/marketing',
+         'en': f'Marketing budget for {m_en}', 'ar': f'ميزانية تسويق {m_ar}', 'hint_en': 'split by demand + holdout test', 'hint_ar': 'متقسمة حسب الطلب + تجربة إيقاف'},
+        {'id': 'count', 'auto': False, 'done': bool(checks.get('count')), 'when': None, 'link': '#/branches?sort=gap',
+         'en': 'Physical stock count in 5 branches', 'ar': 'جرد فعلي في 5 فروع', 'hint_en': ', '.join(top5), 'hint_ar': '، '.join(top5)},
+        {'id': 'report', 'auto': False, 'done': bool(checks.get('report')), 'when': None, 'link': '#/report',
+         'en': 'Send the monthly report', 'ar': 'تقرير الشهر', 'hint_en': 'one printable page', 'hint_ar': 'صفحة واحدة للطباعة'},
     ]
+    return {'month': month, 'window': win, 'items': items, 'done': sum(i['done'] for i in items)}
 
 
-# ---------------------------------------------------------------- assistant (answers only from the numbers, always with the source)
+# ---------------------------------------------------------------- «خيط» – the assistant
+def norm(t):
+    t = str(t).lower()
+    for a, b in (('أ', 'ا'), ('إ', 'ا'), ('آ', 'ا'), ('ة', 'ه'), ('ى', 'ي'), ('ـ', '')):
+        t = t.replace(a, b)
+    return t
+
+
+CAT_WORDS = {
+    'Socks': ['socks', 'sock', 'شراب'], 'Men tops': ['men tops', 'تيشيرت رجالي', 'تيشيرتات رجالي'], 'Men boxers': ['boxer', 'بوكسر'],
+    'Women tops': ['women tops', 'تيشيرت حريمي', 'تيشيرتات حريمي'], 'Kids underwear': ['kids', 'اطفال'], 'Men underwear': ['men underwear', 'داخلي رجالي'],
+    'Women underwear': ['women underwear', 'داخلي حريمي'], 'Girls underwear': ['girls underwear', 'داخلي بناتي'], 'Women bras': ['bra', 'برا ', 'صدري'],
+    'Home textiles': ['home', 'مفروشات', 'مفارش'], 'Accessories': ['accessor', 'اكسسوار'], 'Men bottoms': ['men bottoms', 'بناطيل رجالي', 'بنطلون رجالي'],
+    'Women bottoms': ['women bottoms', 'بناطيل حريمي', 'بنطلون حريمي'], 'Women pajamas': ['women pajama', 'بيجامات حريمي', 'بيجامه حريمي'],
+    'Boys pajamas': ['boys pajama', 'بيجامات ولادي', 'بيجامه ولادي'], 'Girls pajamas': ['girls pajama', 'بيجامات بناتي', 'بيجامه بناتي'],
+}
+MONTH_WORDS = {11: ['نوفمبر', 'november', 'nov'], 12: ['ديسمبر', 'december', 'dec'], 1: ['يناير', 'january', 'jan']}
 TOPICS = [
-    ('sales', ['sales', 'revenue', 'growth', 'grow', 'مبيعات', 'نمو', 'ايراد', 'إيراد', 'بيع']),
+    ('plan', ['what should', 'first', 'priority', 'نعمل ايه', 'ابدا', 'اولويه', 'الاول', 'المطلوب']),
+    ('purchase', ['purchase', 'buy', 'order', 'supplier', 'شراء', 'نشتري', 'اشتري', 'مشتريات', 'مورد', 'امر']),
+    ('distribution', ['distribut', 'allocat', 'transfer', 'ship to branch', 'توزيع', 'نبعت', 'تحويل', 'نقل']),
+    ('discount', ['discount', 'promo', 'offer', 'price', 'خصم', 'عرض', 'عروض', 'سعر', 'تسعير']),
+    ('stock', ['stock', 'inventory', 'missing', 'stock count', 'مخزون', 'جرد', 'عجز', 'ناقص', 'متحسوب']),
+    ('marketing', ['marketing', 'campaign', 'ads', 'budget', 'تسويق', 'حمل', 'اعلان', 'ميزاني']),
     ('profit', ['profit', 'margin', 'ربح', 'هامش', 'مكسب']),
-    ('discount', ['discount', 'promo', 'خصم', 'خصومات', 'عروض']),
-    ('transfer', ['transfer', 'allocation', 'allocate', 'branch stock', 'توزيع', 'تحويل', 'تحويلات']),
-    ('purchase', ['purchase', 'buy', 'buying', 'supplier', 'po ', 'شراء', 'نشتري', 'مشتريات', 'مورد']),
-    ('stock', ['stock', 'inventory', 'missing', 'shrink', 'count', 'مخزون', 'جرد', 'عجز', 'ناقص']),
-    ('marketing', ['marketing', 'campaign', 'ads', 'budget', 'تسويق', 'حملات', 'حملة', 'اعلان', 'إعلان', 'ميزانية']),
-    ('customer', ['customer', 'churn', 'loyal', 'rfm', 'عميل', 'عملاء', 'ولاء']),
-    ('forecast', ['forecast', 'predict', 'next', 'quarter', 'توقع', 'توقّع', 'الجاي', 'الجاية']),
-    ('branch', ['branch', 'store', 'location', 'فرع', 'فروع', 'محل']),
-    ('shipping', ['shipping', 'delivery', 'return', 'شحن', 'توصيل', 'مرتجع']),
-    ('people', ['payroll', 'employee', 'salary', 'staff', 'hr', 'مرتب', 'موظف', 'موظفين']),
-    ('data', ['data', 'gap', 'trust', 'quality', 'readiness', 'داتا', 'بيانات', 'ثغرات', 'ثغرة', 'جودة']),
-    ('plan', ['plan', 'action', 'priority', 'do first', 'خطة', 'نعمل', 'أولوية', 'اولوية', 'اعمل']),
+    ('sales', ['sales', 'revenue', 'growth', 'مبيعات', 'نمو', 'ايراد', 'بيع']),
+    ('forecast', ['forecast', 'predict', 'next', 'demand', 'توقع', 'الجاي', 'الطلب']),
+    ('customer', ['customer', 'loyal', 'churn', 'عميل', 'عملاء', 'ولاء']),
+    ('people', ['staff', 'employee', 'manager', 'cashier', 'payroll', 'موظف', 'مدير فرع', 'كاشير', 'مرتب']),
+    ('branch', ['branch', 'store', 'فرع', 'فروع']),
+    ('data', ['data', 'trust', 'quality', 'داتا', 'بيانات', 'ثقه', 'جوده']),
 ]
 
 
-def answer(q, M, lang='en'):
-    ql = q.lower()
-    topic = next((name for name, words in TOPICS if any(re.search(re.escape(w), ql) for w in words)), None)
+def _find_branch(q, br):
+    m = re.search(r'br\s*0*(\d{1,3})', q)
+    if m:
+        bid = f'BR{int(m.group(1)):03d}'
+        if bid in set(br.branch_id):
+            return bid
+    hits = [(len(n), b) for b, n in zip(br.branch_id, br.branch_name_ar) if norm(n) in q]
+    return max(hits)[1] if hits else None
+
+
+def _find_cat(q):
+    for cat, words in CAT_WORDS.items():
+        if any(norm(w) in q for w in words) or norm(CAT_AR[cat]) in q:
+            return cat
+    return None
+
+
+def answer(q, M, s, lang='ar'):
     ar = lang == 'ar'
-    fy, d, b = M['fy'], M['discount'], M['bridge']
+    t = (lambda en, a: a if ar else en)
+    qn = norm(q)
+    br = M['base']['branches']
+    fc = M['forecast']
+    start, fq = F.next_months(fc)
+
+    # 1) a branch
+    bid = _find_branch(qn, br)
+    if bid:
+        r = br.set_index('branch_id').loc[bid]
+        nxt = MG.distribution(M['base'], fc)['lines']
+        send = nxt[nxt.branch_id == bid].send.sum()
+        staff = t('no store manager on file' if not r.has_manager else 'no cashier on file' if not r.has_cashier else 'full roles on file',
+                  'مفيش مدير فرع في الملف' if not r.has_manager else 'مفيش كاشير في الملف' if not r.has_cashier else 'الوظايف كاملة في الملف')
+        return {'answer': t(f'{r.branch_name_ar} ({bid}, {r.governorate_ar}) sold {_m(r.sales26)} EGP in FY2026 ({r.growth:+.0f}%). It received ×{r.sent_per_sold:.1f} what it sold, '
+                            f'and next month it needs {send:,.0f} pieces from {r.dc_name}.',
+                            f'{r.branch_name_ar} ({bid}، {r.governorate_ar}) باع بـ {_ar_m(r.sales26)} جنيه في FY2026 ({r.growth:+.0f}%). استلم ×{r.sent_per_sold:.1f} من اللي باعه، '
+                            f'والشهر الجاي محتاج {send:,.0f} قطعة من {r.dc_name}.'),
+                'facts': [[t('Stock cover', 'المخزون يكفي'), t(f'{r.months_cover:.1f} months', f'{r.months_cover:.1f} شهر')],
+                          [t('Pieces not accounted for', 'قطع مش متحسوبة'), f'{r.stock_gap:,.0f}'], [t('Staff', 'الموظفين'), staff]],
+                'links': [{'href': f'#/branches/{bid}', 'en': 'Open branch profile', 'ar': 'افتح ملف الفرع'},
+                          {'href': f'#/distribution?branch={bid}', 'en': 'Pick list', 'ar': 'قايمة التجهيز'}]}
+
+    # 2) a category
+    cat = _find_cat(qn)
+    if cat:
+        f3 =fq[fq.category_en == cat].groupby('month').units.sum()
+        ly = M['hist'][(M['hist'].category_en == cat) & M['hist'].month.isin([m - pd.DateOffset(years=1) for m in f3.index])].units.sum()
+        mix = M['mix']
+        sold_pct = mix.loc[cat, 'sold_pct'] if cat in mix.index else float('nan')
+        sent_pct = mix.loc[cat, 'sent_pct'] if cat in mix.index else float('nan')
+        name = CAT_AR[cat] if ar else cat
+        return {'answer': t(f'{name}: {f3.sum():,.0f} pieces expected for {month_name(start, False)} – {month_name(f3.index.max(), False)} '
+                            f'({(f3.sum() / ly - 1) * 100:+.0f}% vs the same months last year). It is {sold_pct:.0f}% of pieces sold and {sent_pct:.0f}% of pieces shipped.',
+                            f'{name}: متوقع {f3.sum():,.0f} قطعة من {MONTH_AR[start.month]} لـ {MONTH_AR[f3.index.max().month]} '
+                            f'({(f3.sum() / ly - 1) * 100:+.0f}% عن نفس الشهور السنة اللي فاتت). وهي {sold_pct:.0f}% من القطع المتباعة و {sent_pct:.0f}% من القطع المبعوتة.'),
+                'facts': [[month_name(m, ar), f'{v:,.0f}'] for m, v in f3.items()],
+                'links': [{'href': '#/purchase', 'en': 'Purchase plan', 'ar': 'خطة الشراء'},
+                          {'href': f'#/pricing?category={cat}', 'en': 'Plan a promotion', 'ar': 'خطط لعرض'}]}
+
+    # 3) a governorate
+    g = M['gov']
+    gov = next((x for x in sorted(g.index, key=len, reverse=True) if norm(x) in qn), None)
+    if gov:
+        r = g.loc[gov]
+        nb = (br.governorate_ar == gov).sum()
+        dc = br[br.governorate_ar == gov].dc_name.iloc[0] if nb else '-'
+        return {'answer': t(f'{gov}: {nb} branches served from {dc}. {r.order_share:.1f}% of FY2026 orders and {r.spend_share:.1f}% of marketing spend.',
+                            f'{gov}: {nb} فرع بيستلموا من {dc}. {r.order_share:.1f}% من طلبات FY2026 و {r.spend_share:.1f}% من صرف التسويق.'),
+                'facts': [[t('Orders FY2026', 'طلبات FY2026'), f'{r.orders:,.0f}'], [t('Spend FY2026', 'صرف FY2026'), f'{r.spend:,.0f}']],
+                'links': [{'href': '#/marketing', 'en': 'Marketing budget', 'ar': 'ميزانية التسويق'},
+                          {'href': f'#/branches?gov={gov}', 'en': 'Its branches', 'ar': 'فروعها'}]}
+
+    # 4) a month of the plan
+    mon = next((m for m, words in MONTH_WORDS.items() if any(w in qn for w in words)), None)
+    if mon:
+        x = fq[fq.month.dt.month == mon]
+        if len(x):
+            top = x.groupby('category_en').units.sum().sort_values(ascending=False).head(4)
+            mts = x.month.iloc[0]
+            return {'answer': t(f'{month_name(mts, False)}: about {x.units.sum():,.0f} pieces expected across all channels. Top categories:',
+                                f'{month_name(mts, True)}: متوقع حوالي {x.units.sum():,.0f} قطعة في كل القنوات. أكتر فئات:'),
+                    'facts': [[CAT_AR[c] if ar else c, f'{v:,.0f}'] for c, v in top.items()],
+                    'links': [{'href': f'#/distribution?month={mts.strftime("%Y-%m")}', 'en': 'Distribution for this month', 'ar': 'توزيع الشهر ده'}]}
+
+    # 5) topics
+    topic = next((name for name, words in TOPICS if any(norm(w) in qn for w in words)), None)
+    fy, d, st, b = M['fy'], M['discount'], M['stock'], M['bridge']
     last = fy.iloc[-1]
+    cyc = cycle(M, s)
+    left = [i for i in cyc['items'] if not i['done']]
     R = {
-        'sales': (f"FY2026 net sales were {_m(last.net_sales)} EGP ({last.net_sales_g:+.0f}%). Real growth in pieces was {last.units_g:+.1f}%; the rest is price ({last.price_per_unit_g:+.0f}% per piece). Peaks: Nov–Dec and Mar–May.",
-                  f"صافي مبيعات FY2026 كان {_m(last.net_sales)} جنيه ({last.net_sales_g:+.0f}%). النمو الحقيقي في القطع {last.units_g:+.1f}%؛ والباقي أسعار ({last.price_per_unit_g:+.0f}% في سعر القطعة). الذروة: نوفمبر–ديسمبر ومارس–مايو.", 'home'),
-        'profit': (f"FY2026 gross profit {_m(last.gross_profit)} EGP, margin {last.margin_pct:.1f}% (fixed: cost is ~59% of price). The plan adds +{(b['new'] - b['base']) / 1e6:.1f}M a year (+{b['uplift_pct']:.0f}%).",
-                   f"إجمالي ربح FY2026 {_m(last.gross_profit)} جنيه، والهامش {last.margin_pct:.1f}% (ثابت لأن التكلفة حوالي 59% من السعر). الخطة بتزوّد +{(b['new'] - b['base']) / 1e6:.1f} مليون في السنة (+{b['uplift_pct']:.0f}%).", 'home'),
-        'discount': (f"{d['share_lines']:.0f}% of lines get a discount, with no extra pieces ({d['pieces_with']:.2f} vs {d['pieces_without']:.2f}). FY2026 discounts: {_m(d['discount_fy26'])} EGP. Stopping 75% = +{d['discount_fy26'] * 0.75 / 1e6:.1f}M a year.",
-                     f"{d['share_lines']:.0f}% من السطور عليها خصم ومن غير قطع زيادة ({d['pieces_with']:.2f} مقابل {d['pieces_without']:.2f}). خصومات FY2026: {_m(d['discount_fy26'])} جنيه. لو وقفنا 75% منها = +{d['discount_fy26'] * 0.75 / 1e6:.1f} مليون في السنة.", 'discount'),
-        'transfer': (f"Branches got ×{M['transfers'].ratio.iloc[-1]:.1f} of their sales in FY2026 (socks 55% of shipments vs 27% of sales). Demand-based allocation cuts {M['alloc_saving']['cut_pct']:.0f}% of the pieces moved and saves ~{M['alloc_saving']['saving'] / 1e6:.1f}M EGP of transport a year.",
-                     f"الفروع استلمت ×{M['transfers'].ratio.iloc[-1]:.1f} من بيعها في FY2026 (الشرابات 55% من المبعوت مقابل 27% من البيع). التوزيع حسب الطلب بيقلل {M['alloc_saving']['cut_pct']:.0f}% من القطع اللي بتتنقل ويوفّر حوالي {M['alloc_saving']['saving'] / 1e6:.1f} مليون جنيه نقل في السنة.", 'allocation'),
-        'purchase': (f"We buy ~{M['purchasing'].bought.iloc[-1] / 1e6:.0f}M pieces a year for {M['purchasing'].sold.iloc[-1] / 1e3:,.0f}K sold, equally per SKU. The AI forecast needs ~{next_q(M).units.sum() / 1e3:,.0f}K pieces for Nov–Jan.",
-                     f"بنشتري حوالي {M['purchasing'].bought.iloc[-1] / 1e6:.0f} مليون قطعة في السنة مقابل {M['purchasing'].sold.iloc[-1] / 1e3:,.0f} ألف اتباعت، وبالتساوي لكل SKU. توقّع الـ AI محتاج حوالي {next_q(M).units.sum() / 1e3:,.0f} ألف قطعة لنوفمبر–يناير.", 'purchase'),
-        'stock': (f"Stock is {M['stock']['stock_units'] / 1e6:.2f}M pieces ({_m(M['stock']['stock_value'])} EGP) = {M['stock']['months_cover']:.0f} months of sales, and {M['stock']['unaccounted'] / 1e6:.1f}M pieces sent to branches are not accounted for → count 5 branches first.",
-                  f"المخزون {M['stock']['stock_units'] / 1e6:.2f} مليون قطعة ({_m(M['stock']['stock_value'])} جنيه) = {M['stock']['months_cover']:.0f} شهر بيع، و {M['stock']['unaccounted'] / 1e6:.1f} مليون قطعة اتبعتت للفروع ومش متحسوبة → نجرد 5 فروع الأول.", 'problems'),
-        'marketing': (f"FY2026 spend {_m(M['marketing'].spend.iloc[-1])} EGP. Campaigns claim ×{M['marketing'].claimed.sum() / M['marketing'].real_orders.sum():.0f} the real orders and spend has no link with orders. Plan: holdout tests, budget follows demand, cut 25% = +{M['marketing'].spend.iloc[-1] * 0.25 / 1e6:.1f}M.",
-                      f"صرف FY2026 {_m(M['marketing'].spend.iloc[-1])} جنيه. الحملات بتنسب لنفسها ×{M['marketing'].claimed.sum() / M['marketing'].real_orders.sum():.0f} الطلبات الحقيقية والصرف مالوش علاقة بالطلبات. الخطة: تجارب Holdout، والميزانية تمشي مع الطلب، ونقلل 25% = +{M['marketing'].spend.iloc[-1] * 0.25 / 1e6:.1f} مليون.", 'marketing'),
-        'customer': (f"{M['customers']['guest_share']:.0f}% of orders have no customer and a loyal customer shops in {M['customers']['loyal_branches']:.1f} branches. Our churn model scored AUC {M['churn']['auc_model']:.2f} (coin flip), so we rejected it and use a test vs control win-back list.",
-                     f"{M['customers']['guest_share']:.0f}% من الطلبات من غير عميل، والعميل الوفي بيشتري من {M['customers']['loyal_branches']:.1f} فرع. موديل الـ churn جاب AUC {M['churn']['auc_model']:.2f} (رمي عملة)، فرفضناه وبنستخدم قايمة تجربة بمجموعة مقارنة.", 'problems'),
-        'forecast': (f"The AI forecast is {M['backtest']['better_%']:.0f}% more accurate than 'same month last year' (WAPE {M['backtest']['wape_model']}% vs {M['backtest']['wape_naive']}%). Nov 2026 – Jan 2027: ~{next_q(M).units.sum() / 1e3:,.0f}K pieces.",
-                     f"توقّع الـ AI أدق بـ {M['backtest']['better_%']:.0f}% من 'زي السنة اللي فاتت' (خطأ {M['backtest']['wape_model']}% مقابل {M['backtest']['wape_naive']}%). نوفمبر 2026 – يناير 2027: حوالي {next_q(M).units.sum() / 1e3:,.0f} ألف قطعة.", 'purchase'),
-        'branch': ("All 80 branches sell within ±5% of each other, so ranking them or choosing a new location from this data would be noise. 7% of orders are dated before their branch opened → confirm opening dates.",
-                   "الـ 80 فرع بيبيعوا قريب من بعض (±5%)، فترتيبهم أو اختيار مكان فرع جديد من الداتا دي هيبقى عشوائي. و7% من الطلبات متسجلة قبل افتتاح الفرع → نأكد تواريخ الافتتاح.", 'gaps'),
-        'shipping': (f"Free shipping goes to {M['shipping']['free_share']:.0f}% of orders of every size → rule: free only above 1,000 EGP. Delivery days and 'Delayed' are random, so no delivery KPI yet. Refunds are a stable ~1.6% of sales.",
-                     f"الشحن المجاني بيروح لـ {M['shipping']['free_share']:.0f}% من الطلبات من كل الأحجام → القاعدة: مجاني بس فوق 1,000 جنيه. ومدة التوصيل و'متأخر' عشوائيين، فمفيش مؤشر توصيل لسه. والاسترداد ثابت حوالي 1.6% من المبيعات.", 'shipping'),
-        'people': (f"{M['people']['no_manager']} branches have no store manager and payroll covers at most {M['people']['paid_per_month'].max()} of {M['people']['employees']} people → we need the real org chart and full payroll before any workforce KPI.",
-                   f"{M['people']['no_manager']} فرع من غير مدير، والمرتبات بتغطي {M['people']['paid_per_month'].max()} من {M['people']['employees']} بالكتير → محتاجين الهيكل الحقيقي والمرتبات كاملة قبل أي مؤشر للموظفين.", 'gaps'),
-        'data': (f"Of the 22 HVIA app ideas, {int((M['readiness'].status.str.startswith('Ready')).sum())} are fully supported by the data. We logged {len(M['dq'])} data issues and {len(M['requests'])} requests for the company.",
-                 f"من الـ 22 فكرة بتاعة HVIA، {int((M['readiness'].status.str.startswith('Ready')).sum())} الداتا بتشيلهم كاملين. وسجّلنا {len(M['dq'])} مشكلة في الداتا و {len(M['requests'])} طلب للشركة.", 'gaps'),
-        'plan': (f"Start with: (1) freeze random discounts (+{b['actions'].profit.iloc[0] / 1e6:.1f}M), (2) marketing holdout (+{b['actions'].profit.iloc[1] / 1e6:.1f}M), (3) demand-based allocation (+{b['actions'].profit.iloc[2] / 1e6:.1f}M), (4) stock count in 5 branches, (5) buy from the forecast.",
-                 f"نبدأ بـ: (1) نوقف الخصم العشوائي (+{b['actions'].profit.iloc[0] / 1e6:.1f} مليون)، (2) تجربة Holdout في التسويق (+{b['actions'].profit.iloc[1] / 1e6:.1f} مليون)، (3) التوزيع حسب الطلب (+{b['actions'].profit.iloc[2] / 1e6:.1f} مليون)، (4) جرد 5 فروع، (5) الشراء من التوقّع.", 'actions'),
+        'plan': (f"This month: {', '.join(i['en'] for i in left) or 'everything is done'}.",
+                 f"المطلوب الشهر ده: {'، '.join(i['ar'] for i in left) or 'كله اتعمل'}.", [{'href': '#/today', 'en': 'Today', 'ar': 'النهارده'}]),
+        'purchase': (f"For {month_name(start, False)} – Jan the forecast needs {_k(fq.units.sum())} pieces; with 95% safety stock we buy about {_k(M['plan_default'].to_buy.sum())}. "
+                     f"The usual pattern is ~{M['purchasing'].bought.iloc[-1] / 4e6:.1f}M pieces a quarter.",
+                     f"من {MONTH_AR[start.month]} لـ يناير التوقّع محتاج {_ark(fq.units.sum())} قطعة؛ وبمخزون أمان 95% نشتري حوالي {_ark(M['plan_default'].to_buy.sum())}. "
+                     f"والمعتاد حوالي {M['purchasing'].bought.iloc[-1] / 4e6:.1f} مليون قطعة في الربع.", [{'href': '#/purchase', 'en': 'Purchase plan', 'ar': 'خطة الشراء'}]),
+        'distribution': (f"Branches got ×{M['transfers'].ratio.iloc[-1]:.1f} what they sold in FY2026. Next month each branch gets its own demand + 10%, from the nearest warehouse.",
+                         f"الفروع استلمت ×{M['transfers'].ratio.iloc[-1]:.1f} من اللي باعته في FY2026. الشهر الجاي كل فرع ياخد طلبه + 10%، من أقرب مخزن ليه.",
+                         [{'href': '#/distribution', 'en': 'Distribution plan', 'ar': 'خطة التوزيع'}]),
+        'stock': (f"Recorded stock is {st['stock_units'] / 1e6:.2f}M pieces ({_m(st['stock_value'])} EGP) and {st['unaccounted'] / 1e6:.1f}M pieces sent to branches are not accounted for. "
+                  "Until a count confirms the stock, the purchase plan does not subtract it.",
+                  f"المخزون المتسجل {st['stock_units'] / 1e6:.2f} مليون قطعة ({_ar_m(st['stock_value'])} جنيه)، و {st['unaccounted'] / 1e6:.1f} مليون قطعة اتبعتت للفروع ومش متحسوبة. "
+                  "لحد ما الجرد يأكد المخزون، خطة الشراء مش بتطرحه.", [{'href': '#/branches?sort=gap', 'en': 'Branches by gap', 'ar': 'الفروع حسب الفرق'}]),
+        'discount': (f"{d['share_lines']:.0f}% of lines are discounted and pieces per line do not change ({d['pieces_with']:.2f} vs {d['pieces_without']:.2f}). "
+                     f"The current policy: max {policy_of(s)['max_discount']:.0f}%, margin never below {policy_of(s)['floor_margin']:.0f}%.",
+                     f"{d['share_lines']:.0f}% من السطور عليها خصم وعدد القطع مش بيتغير ({d['pieces_with']:.2f} مقابل {d['pieces_without']:.2f}). "
+                     f"السياسة الحالية: أقصى خصم {policy_of(s)['max_discount']:.0f}%، والهامش ميقلش عن {policy_of(s)['floor_margin']:.0f}%.",
+                     [{'href': '#/pricing', 'en': 'Pricing', 'ar': 'التسعير والخصم'}]),
+        'marketing': (f"FY2026 spend was {_m(M['marketing'].spend.iloc[-1])} EGP; campaigns claim ×{M['marketing'].claimed.sum() / M['marketing'].real_orders.sum():.0f} the real orders. "
+                      "The board splits the monthly budget by orders and pauses ads in matched governorates to measure the real effect.",
+                      f"صرف FY2026 كان {_ar_m(M['marketing'].spend.iloc[-1])} جنيه؛ والحملات بتنسب لنفسها ×{M['marketing'].claimed.sum() / M['marketing'].real_orders.sum():.0f} الطلبات الحقيقية. "
+                      "اللوحة بتقسم ميزانية الشهر حسب الطلبات وبتوقف الإعلان في محافظات شبه بعض عشان نقيس الأثر الحقيقي.",
+                      [{'href': '#/marketing', 'en': 'Marketing budget', 'ar': 'ميزانية التسويق'}]),
+        'profit': (f"FY2026 gross profit {_m(last.gross_profit)} EGP, margin {last.margin_pct:.1f}%. Discounts, marketing and allocation together can add about {_m(b['new'] - b['base'])} a year.",
+                   f"إجمالي ربح FY2026 {_ar_m(last.gross_profit)} جنيه، والهامش {last.margin_pct:.1f}%. الخصم والتسويق والتوزيع مع بعض ممكن يزوّدوا حوالي {_ar_m(b['new'] - b['base'])} في السنة.",
+                   [{'href': '#/report', 'en': 'Monthly report', 'ar': 'تقرير الشهر'}]),
+        'sales': (f"FY2026 net sales {_m(last.net_sales)} EGP ({last.net_sales_g:+.0f}%). Pieces grew {last.units_g:+.1f}%; the rest is price ({last.price_per_unit_g:+.0f}% per piece).",
+                  f"صافي مبيعات FY2026 {_ar_m(last.net_sales)} جنيه ({last.net_sales_g:+.0f}%). القطع زادت {last.units_g:+.1f}%؛ والباقي أسعار ({last.price_per_unit_g:+.0f}% في سعر القطعة).",
+                  [{'href': '#/today', 'en': 'Today', 'ar': 'النهارده'}]),
+        'forecast': (f"The forecast was tested on 6 months it never saw: error {M['backtest']['wape_model']}% vs {M['backtest']['wape_naive']}% for 'same month last year'. "
+                     f"Next 3 months: {_k(fq.units.sum())} pieces.",
+                     f"التوقّع اتختبر على 6 شهور ماشافهاش: الخطأ {M['backtest']['wape_model']}% مقابل {M['backtest']['wape_naive']}% لطريقة 'زي السنة اللي فاتت'. "
+                     f"الـ 3 شهور الجاية: {_ark(fq.units.sum())} قطعة.", [{'href': '#/purchase', 'en': 'Purchase plan', 'ar': 'خطة الشراء'}]),
+        'customer': (f"{M['customers']['guest_share']:.0f}% of orders have no customer attached, and a returning customer appears in {M['customers']['loyal_branches']:.1f} branches – "
+                     "so customer numbers are kept out of decisions until the phone number is used as a loyalty ID.",
+                     f"{M['customers']['guest_share']:.0f}% من الطلبات من غير عميل، والعميل اللي بيرجع بيظهر في {M['customers']['loyal_branches']:.1f} فرع – "
+                     "عشان كده أرقام العملاء برا القرارات لحد ما رقم الموبايل يبقى كود الولاء.", []),
+        'people': (f"{M['people']['no_manager']} branches have no store manager and {M['people']['no_cashier']} no cashier on file; payroll covers at most {M['people']['paid_per_month'].max()} of {M['people']['employees']} people.",
+                   f"{M['people']['no_manager']} فرع من غير مدير فرع و {M['people']['no_cashier']} من غير كاشير في الملف؛ والمرتبات بتغطي {M['people']['paid_per_month'].max()} من {M['people']['employees']} بالكتير.",
+                   [{'href': '#/branches?flag=no_manager', 'en': 'Branches without a manager', 'ar': 'فروع من غير مدير'}]),
+        'branch': ("All 80 branches sell within about ±5% of each other, so the board follows them by stock, shipments and staff rather than by ranking. Ask me about any branch by name.",
+                   "الـ 80 فرع بيبيعوا قريب من بعض (حوالي ±5%)، فاللوحة بتتابعهم بالمخزون والتحويلات والموظفين مش بالترتيب. اسألني عن أي فرع باسمه.",
+                   [{'href': '#/branches', 'en': 'Branches', 'ar': 'الفروع'}]),
+        'data': ("Sales, prices, costs, transfers and stock are reliable enough to plan with. Delivery times, return reasons and payroll look random, so the board does not use them.",
+                 "المبيعات والأسعار والتكلفة والتحويلات والمخزون ينفع نخطط بيهم. مدة التوصيل وأسباب المرتجع والمرتبات شكلها عشوائي، فاللوحة مش بتستخدمهم.", []),
     }
     if topic is None:
-        return {'answer': ('I answer from Cottonil’s data. Try: sales, profit, discounts, transfers, purchasing, stock, marketing, customers, forecast, branches, shipping, payroll, data gaps, or "what should we do first?"'
-                           if not ar else 'أنا بجاوب من داتا قطنيل. جرّب تسأل عن: المبيعات، الربح، الخصم، التوزيع، الشراء، المخزون، التسويق، العملاء، التوقّع، الفروع، الشحن، المرتبات، ثغرات الداتا، أو "نعمل إيه الأول؟"'),
-                'link': None, 'topic': None}
-    en, arx, link = R[topic]
-    return {'answer': arx if ar else en, 'link': link, 'topic': topic}
+        return {'answer': t('I answer from Cottonil’s numbers. Ask about a branch (e.g. “Zamalek”), a category (“socks”), a governorate, a month (“December”), '
+                            'or purchasing, distribution, stock, discounts, marketing, sales, profit.',
+                            'أنا بجاوب من أرقام قطنيل. اسألني عن فرع (مثلاً "الزمالك")، فئة ("الشرابات")، محافظة، شهر ("ديسمبر")، '
+                            'أو الشراء، التوزيع، المخزون، الخصم، التسويق، المبيعات، الربح.'), 'links': [], 'facts': []}
+    en, a, links = R[topic]
+    return {'answer': a if ar else en, 'links': links, 'facts': []}
+
+
+def policy_of(s):
+    return s.get('policy') or {'max_discount': 10, 'floor_margin': 30}

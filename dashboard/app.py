@@ -1,41 +1,28 @@
 """
-Cottonil — BI & AI dashboard (HVIA Task 3).
-Run it from the project folder:
-    cd dashboard
-    streamlit run app.py
-This file only builds the menu and the language switch. Each page lives in views/.
+Cottonil Analytics – the BI & AI dashboard (HVIA Task 3).
+Run from the project folder:   cd dashboard   →   streamlit run app.py
+This file builds the top menu, the language switch and the shared look. Each chapter lives in views/.
 """
 import streamlit as st
 import utils as u
 
-st.set_page_config(page_title='Cottonil BI & AI', page_icon='📊', layout='wide')
-
-with st.sidebar:
-    st.radio('Language / اللغة', ['English', u.AR], key='lang', horizontal=True)
+st.set_page_config(page_title='Cottonil Analytics', page_icon='🧵', layout='wide', initial_sidebar_state='collapsed')
+st.session_state.setdefault('lang', u.AR)
+u.apply_style()
 t = u.t
 
-pages = {
-    t('Overview', 'نظرة عامة'): [
-        st.Page('views/exec_center.py', title=t('1 · Executive Command Center', '1 · مركز القيادة'), icon='🎯', default=True),
-    ],
-    t('Apps', 'التطبيقات'): [
-        st.Page('views/sales_pricing.py', title=t('2 · Sales & Pricing Intelligence', '2 · المبيعات والتسعير'), icon='💰'),
-        st.Page('views/customers.py', title=t('3 · Customer 360', '3 · العميل 360'), icon='👥'),
-        st.Page('views/branches.py', title=t('4 · Branches, Channels & Delivery', '4 · الفروع والقنوات والتوصيل'), icon='🗺️'),
-        st.Page('views/inventory.py', title=t('5 · Smart Inventory & AI Forecast', '5 · المخزون الذكي وتوقّع الطلب'), icon='📦'),
-        st.Page('views/procurement.py', title=t('6 · Procurement & Imports', '6 · المشتريات والاستيراد'), icon='🚚'),
-        st.Page('views/marketing.py', title=t('7 · Marketing ROI', '7 · عائد التسويق'), icon='📣'),
-        st.Page('views/people_costs.py', title=t('8 · People & Costs', '8 · الموظفين والمصاريف'), icon='🧑‍💼'),
-    ],
-    t('Built without being asked', 'بنيناه من غير ما يتطلب'): [
-        st.Page('views/data_trust.py', title=t('9 · Data Trust Center', '9 · مركز الثقة في الداتا'), icon='🛡️'),
-    ],
-}
+brand, lang = st.columns([5, 1.4])
+with brand:
+    st.markdown(f'<div class="ct-eyebrow" style="padding-top:8px">COTTONIL · {t("Analytics", "تحليلات")}</div>', unsafe_allow_html=True)
+with lang:
+    st.radio('Language / اللغة', [u.AR, 'English'], key='lang', horizontal=True, label_visibility='collapsed')
 
-nav = st.navigation(pages)
-with st.sidebar:
-    st.caption('Cottonil · Wear it better')
-    st.caption(t('Data: Oct 2018 – Oct 2026 · Fiscal year Oct–Sep (FY2026 = Oct 2025 – Sep 2026)',
-                 'البيانات: أكتوبر 2018 – أكتوبر 2026 · السنة المالية أكتوبر–سبتمبر'))
-    st.caption(t('Built by Shahd Ibrahim · HVIA Task 3', 'إعداد: شهد إبراهيم · HVIA Task 3'))
-nav.run()
+pages = [
+    st.Page('views/overview.py', title=t('Big picture', 'الصورة الكبيرة'), icon=':material/insights:', default=True),
+    st.Page('views/growth.py', title=t('Growth & margin', 'النمو والهامش'), icon=':material/trending_up:'),
+    st.Page('views/supply.py', title=t('Stock & supply', 'المخزون والإمداد'), icon=':material/inventory_2:'),
+    st.Page('views/customers_marketing.py', title=t('Customers & marketing', 'العملاء والتسويق'), icon=':material/groups:'),
+    st.Page('views/ai_lab.py', title=t('AI lab', 'مختبر الـ AI'), icon=':material/neurology:'),
+    st.Page('views/trust.py', title=t('Data trust', 'الثقة في الداتا'), icon=':material/verified_user:'),
+]
+st.navigation(pages, position='top').run()

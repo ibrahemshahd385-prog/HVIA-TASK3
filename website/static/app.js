@@ -1,366 +1,409 @@
-/* Cottonil Decision Hub – single-page app (vanilla JS). Every number comes from the Flask API (core/ in Python). */
-const S = { lang: localStorage.getItem('lang') || 'en', me: null, cache: {} };
+/* Cottonil · Manager board – shell, helpers, login, router, Today, assistant, report. Pages for the tools are in pages.js. */
+const S = { lang: (() => { try { return localStorage.getItem('lang') || 'ar'; } catch (e) { return 'ar'; } })(), me: null, meta: null, today: null, chat: [], cache: {} };
 const t = (en, ar) => (S.lang === 'ar' ? ar : en);
-const $ = (sel, root = document) => root.querySelector(sel);
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const M = v => (v / 1e6).toLocaleString('en', { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + 'M';
-const K = v => Math.round(v / 1e3).toLocaleString('en') + 'K';
-const N = v => Math.round(v).toLocaleString('en');
-const P = (v, d = 1) => (v >= 0 ? '+' : '') + v.toFixed(d) + '%';
-const EGP = () => t('EGP', 'جنيه');
 
-async function api(path, opts = {}) {
-  const r = await fetch(path, { credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, ...opts,
-    body: opts.body ? JSON.stringify(opts.body) : undefined });
-  if (r.status === 401 && !path.includes('/login')) { S.me = null; renderLogin(); throw new Error('login'); }
+// ---------------------------------------------------------------- numbers & names
+const nf = (v, d = 0) => (v == null || isNaN(v) ? '–' : Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }));
+// numbers inside Arabic text keep their own left-to-right order (dates, %, ×, signs)
+const NUM_RE = /(?<![A-Za-z\d.,])[+−\-×]?\d[\d,.:\-\/]*%?/g;
+const N = (x) => esc(x).replace(NUM_RE, m => `<span class="num">${m}</span>`);
+const sign = (v, d = 0) => (v > 0 ? '+' : v < 0 ? '−' : '') + nf(Math.abs(v), d);
+const big = (v, d = 1) => {
+  const a = Math.abs(v);
+  if (a >= 1e9) return S.lang === 'ar' ? `${nf(v / 1e9, 1)} مليار` : `${nf(v / 1e9, 1)}B`;
+  if (a >= 1e6) return S.lang === 'ar' ? `${nf(v / 1e6, d)} مليون` : `${nf(v / 1e6, d)}M`;
+  if (a >= 1e4) return S.lang === 'ar' ? `${nf(v / 1e3, 0)} ألف` : `${nf(v / 1e3, 0)}K`;
+  return nf(v);
+};
+const egp = v => t(`${big(v)} EGP`, `${big(v)} جنيه`);
+const pcs = v => t(`${big(v)} pieces`, `${big(v)} قطعة`);
+const cat = c => (S.lang === 'ar' && S.meta ? S.meta.cat_ar[c] || c : c);
+const role = r => (S.lang === 'ar' && S.meta ? S.meta.role_ar[r] || r : r);
+const MON_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MON_AR = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+const ym = s => { const [y, m] = String(s).slice(0, 7).split('-').map(Number); return { y, m }; };
+const mon = s => { const { y, m } = ym(s); return t(`${MON_EN[m - 1]} ${y}`, `${MON_AR[m - 1]} ${y}`); };
+const monOnly = s => { const { m } = ym(s); return t(MON_EN[m - 1], MON_AR[m - 1]); };
+const monShort = s => { const { y, m } = ym(s); return t(`${MON_EN[m - 1]} ${String(y).slice(2)}`, `${MON_AR[m - 1]} ${String(y).slice(2)}`); };
+const dateLong = d => new Date(d).toLocaleDateString(S.lang === 'ar' ? 'ar-EG-u-nu-latn' : 'en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+// ---------------------------------------------------------------- icons (Lucide-style, inline)
+const ICONS = {
+  dashboard: '<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>',
+  cart: '<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/>',
+  truck: '<path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.62l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/>',
+  tag: '<path d="M12.59 2.59A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.7 8.7a2.43 2.43 0 0 0 3.42 0l6.58-6.58a2.43 2.43 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1"/>',
+  megaphone: '<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
+  store: '<path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2 2.7 2.7 0 0 1-2-1 2.7 2.7 0 0 1-2 1 2.7 2.7 0 0 1-2-1 2.7 2.7 0 0 1-2 1 2.7 2.7 0 0 1-2-1 2.7 2.7 0 0 1-2 1 2.7 2.7 0 0 1-2-1 2.7 2.7 0 0 1-2 1 2 2 0 0 1-2-2V7"/>',
+  spark: '<path d="M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.14-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0l1.58 6.14a2 2 0 0 0 1.44 1.44l6.14 1.58a.5.5 0 0 1 0 .96l-6.14 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0z"/>',
+  file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  calendar: '<rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',
+  box: '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><path d="m3.3 7 7.7 4.73a2 2 0 0 0 2 0L20.7 7"/>',
+  people: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  arrow: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+  back: '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+  logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>',
+  key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>',
+  print: '<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6"/><rect x="6" y="14" width="12" height="8" rx="1"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+  save: '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+  warehouse: '<path d="M22 8.35V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8.35A2 2 0 0 1 3.26 6.5l8-3.2a2 2 0 0 1 1.48 0l8 3.2A2 2 0 0 1 22 8.35Z"/><path d="M6 18h12"/><path d="M6 14h12"/><rect width="12" height="12" x="6" y="10"/>',
+  menu: '<line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+  target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+  list: '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
+};
+const I = (name, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+
+// ---------------------------------------------------------------- api, toast, modal, csv
+async function api(url, opts = {}) {
+  const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', ...opts });
+  if (r.status === 401 && !url.endsWith('/api/login')) { S.me = null; renderLogin(); throw new Error('login'); }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
 }
-function toast(msg) { const d = document.createElement('div'); d.className = 'toast'; d.textContent = msg; document.body.appendChild(d); setTimeout(() => d.remove(), 2200); }
-function setDir() { document.documentElement.lang = S.lang; document.documentElement.dir = S.lang === 'ar' ? 'rtl' : 'ltr'; }
-function switchLang() { S.lang = S.lang === 'ar' ? 'en' : 'ar'; localStorage.setItem('lang', S.lang); setDir(); S.me ? route() : renderLogin(); }
+const post = (url, body) => api(url, { method: 'POST', body: JSON.stringify(body || {}) });
 
-/* ------------------------------------------------------------------ login */
+function toast(msg) {
+  $$('.toast').forEach(x => x.remove());
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = I('check') + esc(msg);
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2600);
+}
+
+function modal(html, onMount) {
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal">${html}</div>`;
+  const close = () => bg.remove();
+  bg.addEventListener('click', e => { if (e.target === bg || e.target.closest('[data-close]')) close(); });
+  document.body.appendChild(bg);
+  onMount && onMount(bg, close);
+  return close;
+}
+
+function downloadCSV(rows, cols, name) {
+  const head = cols.map(c => c[1]).join(',');
+  const body = rows.map(r => cols.map(c => { const v = typeof c[0] === 'function' ? c[0](r) : r[c[0]]; return /[",\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : (v ?? ''); }).join(',')).join('\n');
+  const blob = new Blob(['﻿' + head + '\n' + body], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `cottonil_${name}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+const R = x => (/[<>]/.test(String(x)) ? x : N(x));     // plain text → numbers isolated; HTML passes through
+const kpi = (label, value, sub = '', accent = false, icon = '') =>
+  `<div class="card kpi ${accent ? 'accent' : ''}"><div class="l">${icon ? I(icon) : ''}${R(label)}</div><div class="v">${R(value)}</div><div class="s">${R(sub)}</div></div>`;
+const head = (title, sub, actions = '') => `<div class="head"><div><h1>${R(title)}</h1>${sub ? `<p>${R(sub)}</p>` : ''}</div><div class="actions no-print">${actions}</div></div>`;
+const segHTML = (name, opts, val) => `<div class="seg" data-seg="${name}">${opts.map(([v, l]) => `<button type="button" data-v="${v}" class="${String(v) === String(val) ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+function onSeg(root, name, fn) {
+  const el = $(`[data-seg="${name}"]`, root);
+  el && el.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; $$('button', el).forEach(x => x.classList.toggle('on', x === b)); fn(b.dataset.v); });
+}
+const debounce = (fn, ms = 250) => { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => fn(...a), ms); }; };
+
+// ---------------------------------------------------------------- login & shell
+function setLang(l) {
+  S.lang = l;
+  try { localStorage.setItem('lang', l); } catch (e) { /* private window */ }
+  document.documentElement.lang = l;
+  document.documentElement.dir = l === 'ar' ? 'rtl' : 'ltr';
+  document.title = t('Cottonil · Manager board', 'قطنيل · لوحة المدير');
+}
+
 function renderLogin() {
-  setDir();
+  setLang(S.lang);
   $('#app').innerHTML = `
-  <div class="login-wrap"><form class="login" id="loginForm" autocomplete="on">
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <div class="brand">COTTONIL<small>${t('Decision Hub', 'مركز القرار')}</small></div>
-      <button type="button" class="lang-toggle" id="lg">${t('العربية', 'English')}</button></div>
-    <h1>${t('Manager sign in', 'دخول المدير')}</h1>
-    <p>${t('Problems, solutions and the decisions of the month – from Cottonil’s own data.', 'المشاكل والحلول وقرارات الشهر – من داتا قطنيل نفسها.')}</p>
-    <div class="field"><label>${t('Username', 'اسم المستخدم')}</label><input name="username" required autocomplete="username" value=""></div>
-    <div class="field"><label>${t('Password', 'كلمة السر')}</label><input name="password" type="password" required autocomplete="current-password"></div>
-    <div class="err" id="err"></div>
-    <button class="btn block">${t('Sign in', 'دخول')}</button>
-    <div class="hint">${t('Accounts: ceo · supply · marketing · finance. The first password is in the README; you will be asked to change it.',
-                          'الحسابات: ceo · supply · marketing · finance. أول كلمة سر مكتوبة في الـ README، وهيطلب منك تغيّرها.')}</div>
-  </form></div>`;
-  $('#lg').onclick = switchLang;
-  $('#loginForm').onsubmit = async e => {
+  <div class="login">
+    <div class="login-art">
+      <div class="brand"><div class="mark">ق</div><div><b style="color:#fff">${t('Cottonil', 'قطنيل')}</b><span style="color:#C9D4E6">${t('Manager board', 'لوحة المدير')}</span></div></div>
+      <div>
+        <h1>${t('Run the month from one place.', 'إدارة الشهر من مكان واحد.')}</h1>
+        <p>${t('Every number comes from the company data, and every page ends with something you can use: a purchase order, a pick list, a budget.',
+              'كل رقم جاي من داتا الشركة، وكل صفحة بتطلع حاجة تشتغل بيها: أمر شراء، قايمة تجهيز للفرع، ميزانية.')}</p>
+        <ul>
+          <li>${I('cart')} ${t('Buy for demand, from a tested forecast', 'شراء على قد الطلب، من توقّع متجرّب')}</li>
+          <li>${I('truck')} ${t('Each branch gets what it sells, from the nearest warehouse', 'كل فرع ياخد اللي بيبيعه، من أقرب مخزن')}</li>
+          <li>${I('tag')} ${t('Discounts with a policy, promotions as tests', 'خصم بسياسة، وعروض كتجربة')}</li>
+          <li>${I('store')} ${t('A profile for each of the 80 branches', 'ملف لكل فرع من الـ 80')}</li>
+        </ul>
+      </div>
+      <svg class="threads" viewBox="0 0 200 200" fill="none" stroke="#fff" stroke-width="2"><circle cx="100" cy="100" r="90"/><circle cx="100" cy="100" r="70"/><circle cx="100" cy="100" r="50"/><circle cx="100" cy="100" r="30"/><path d="M10 100h180M100 10v180"/></svg>
+    </div>
+    <div class="login-form">
+      <form id="lf" autocomplete="on">
+        <div><h2>${t('Sign in', 'تسجيل الدخول')}</h2><p class="muted small">${t('One account for the manager.', 'حساب واحد للمدير.')}</p></div>
+        <div class="field"><label>${t('Username', 'اسم المستخدم')}</label><input type="text" name="username" value="manager" autocomplete="username" required></div>
+        <div class="field"><label>${t('Password', 'كلمة السر')}</label><input type="password" name="password" autocomplete="current-password" required autofocus></div>
+        <div class="err" id="lerr"></div>
+        <button class="btn primary" type="submit">${t('Sign in', 'دخول')}</button>
+        <button class="btn ghost" type="button" id="llang">${I('globe')} ${t('العربية', 'English')}</button>
+      </form>
+    </div>
+  </div>`;
+  $('#llang').onclick = () => { setLang(S.lang === 'ar' ? 'en' : 'ar'); renderLogin(); };
+  $('#lf').onsubmit = async e => {
     e.preventDefault();
     const f = new FormData(e.target);
     try {
-      S.me = await api('/api/login', { method: 'POST', body: { username: f.get('username'), password: f.get('password') } });
-      if (location.hash === '#/home' || location.hash === '') { history.replaceState(null, '', '#/home'); route(); } else location.hash = '#/home';
-    }
-    catch (err) { $('#err').textContent = t('Wrong username or password', 'اسم المستخدم أو كلمة السر غلط'); }
+      S.me = await post('/api/login', { username: f.get('username'), password: f.get('password') });
+      await startApp();
+    } catch (err) { $('#lerr').textContent = t('Wrong username or password', 'اسم المستخدم أو كلمة السر غلط'); }
   };
 }
 
-function passwordModal(force) {
-  if (document.querySelector('.modal-back')) return;
-  const back = document.createElement('div');
-  back.className = 'modal-back';
-  back.innerHTML = `<form class="modal"><h2 style="margin-top:0">${t('Change your password', 'غيّر كلمة السر')}</h2>
-    ${force ? `<p class="sub">${t('First sign-in: please choose your own password.', 'أول دخول: اختار كلمة سر خاصة بيك.')}</p>` : ''}
-    <div class="field"><label>${t('Current password', 'كلمة السر الحالية')}</label><input name="old" type="password" required></div>
-    <div class="field"><label>${t('New password (8+ characters)', 'كلمة السر الجديدة (8 حروف أو أكتر)')}</label><input name="new" type="password" minlength="8" required></div>
-    <div class="err"></div><div style="display:flex;gap:8px"><button class="btn">${t('Save', 'حفظ')}</button>
-    ${force ? '' : `<button type="button" class="btn ghost" id="cx">${t('Cancel', 'إلغاء')}</button>`}</div></form>`;
-  document.body.appendChild(back);
-  if (!force) $('#cx', back).onclick = () => back.remove();
-  $('form', back).onsubmit = async e => {
-    e.preventDefault(); const f = new FormData(e.target);
-    try { await api('/api/password', { method: 'POST', body: { old: f.get('old'), new: f.get('new') } }); back.remove(); S.me.must_change = false; toast(t('Password changed', 'اتغيرت كلمة السر')); }
-    catch (err) { $('.err', back).textContent = err.message; }
-  };
-}
-
-/* ------------------------------------------------------------------ shell */
-const NAV = () => [
-  [t('Overview', 'نظرة عامة'), [['home', '🏠', t('Decisions this month', 'قرارات الشهر')], ['problems', '🧩', t('Problems & solutions', 'المشاكل والحلول')]]],
-  [t('Solution tools', 'أدوات الحل'), [['purchase', '🛒', t('Purchase plan (AI)', 'خطة الشراء (AI)')], ['allocation', '🚚', t('Branch allocation', 'توزيع الفروع')],
-    ['discount', '🏷️', t('Discount guardrail', 'قواعد الخصم')], ['marketing', '📣', t('Marketing budget & test', 'ميزانية وتجربة التسويق')], ['shipping', '📦', t('Free-shipping rule', 'قاعدة الشحن المجاني')]]],
-  [t('Follow-up', 'المتابعة'), [['actions', '✅', t('Action tracker', 'متابعة المهام')], ['gaps', '🛡️', t('Data gaps & requests', 'ثغرات الداتا والطلبات')], ['assistant', '💬', t('Ask the data', 'اسأل الداتا')]]],
+const NAV = [
+  ['today', 'dashboard', 'Today', 'النهارده'],
+  ['_', '', 'Plans', 'الخطط'],
+  ['purchase', 'cart', 'Purchase plan', 'خطة الشراء'],
+  ['distribution', 'truck', 'Distribution', 'خطة التوزيع'],
+  ['pricing', 'tag', 'Pricing & discounts', 'التسعير والخصم'],
+  ['marketing', 'megaphone', 'Marketing budget', 'ميزانية التسويق'],
+  ['_', '', 'Follow-up', 'المتابعة'],
+  ['branches', 'store', 'Branches', 'الفروع'],
+  ['report', 'file', 'Monthly report', 'تقرير الشهر'],
+  ['assistant', 'spark', 'Khayt · assistant', 'خيط · المساعد'],
 ];
 
-function shell(page, title, sub, body) {
-  setDir();
-  const nav = NAV().map(([g, items]) => `<div class="nav-group">${g}</div><div class="nav">${items.map(([id, ic, label]) =>
-    `<a href="#/${id}" class="${id === page ? 'active' : ''}">${ic} <span>${label}</span></a>`).join('')}</div>`).join('');
-  $('#app').innerHTML = `<div class="shell">
-    <aside class="side" id="side"><div class="brand">COTTONIL<small>${t('Decision Hub · HVIA Task 3', 'مركز القرار · HVIA Task 3')}</small></div>${nav}
-      <div class="me"><b>${esc(t(S.me.name, S.me.name_ar))}</b>${esc(S.me.role)}
-        <div class="row"><button id="lg">${t('العربية', 'English')}</button><button id="pw">${t('Password', 'كلمة السر')}</button><button id="lo">${t('Sign out', 'خروج')}</button></div></div></aside>
-    <main><div class="top"><div><button class="menu-btn" id="mb">☰</button><h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}</div></div><div id="page">${body || '<div class="loading">…</div>'}</div></main></div>`;
-  $('#lg').onclick = switchLang;
-  $('#lo').onclick = async () => { await api('/api/logout', { method: 'POST' }); S.me = null; renderLogin(); };
-  $('#pw').onclick = () => passwordModal(false);
-  $('#mb').onclick = () => $('#side').classList.toggle('open');
-}
-
-function kpi(label, value, delta, good = true, help = '') {
-  const cls = delta == null ? '' : ((delta >= 0) === good ? 'up' : 'down');
-  return `<div class="kpi" title="${esc(help)}"><div class="l">${label}</div><div class="v">${value}</div>${delta == null ? '' : `<div class="d ${cls}">${P(delta)} ${t('vs FY2025', 'عن FY2025')}</div>`}</div>`;
-}
-function table(rows, cols) {
-  return `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th class="${c.n ? 'n' : ''}">${c.label}</th>`).join('')}</tr></thead><tbody>${rows.map(r =>
-    `<tr>${cols.map(c => `<td class="${c.n ? 'n' : ''}">${c.f ? c.f(r[c.key], r) : esc(r[c.key])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
-}
-const statusChip = s => `<span class="chip ${/^Ready/.test(s) ? 'ready' : s === 'Partial' ? 'partial' : /rejected|reliable/.test(s) ? 'bad' : 'grey'}">${esc(t(s, {
-  'Ready': 'جاهز', 'Ready (flat)': 'جاهز (ثابت)', 'Partial': 'جزئي', 'Tested – rejected': 'اتجرّب واترفض', 'Not reliable': 'غير موثوق', 'Not meaningful': 'بلا معنى', 'Not possible': 'غير ممكن' }[s] || s))}</span>`;
-const sevChip = s => `<span class="chip ${({ Business: 'business', High: 'high', Medium: 'medium', Unreliable: 'grey' })[s]}">${esc(t(s, { Business: 'اكتشاف بزنس', High: 'عالي', Medium: 'متوسط', Unreliable: 'حقل عشوائي' }[s]))}</span>`;
-const OWNERS = { ceo: ['CEO', 'المدير التنفيذي'], supply: ['Supply chain', 'سلسلة الإمداد'], marketing: ['Marketing', 'التسويق'], finance: ['Finance', 'المالية'] };
-const owner = u => OWNERS[u] ? t(...OWNERS[u]) : esc(u);
-const AREAS = { Sales: 'المبيعات', Marketing: 'التسويق', 'Supply chain': 'سلسلة الإمداد', Finance: 'المالية', Strategy: 'الاستراتيجية', Customers: 'العملاء',
-  'E-commerce': 'الأونلاين', HR: 'الموارد البشرية', Operations: 'التشغيل', CEO: 'المدير التنفيذي', 'CEO / Sales': 'المدير التنفيذي / المبيعات' };
-const area = a => esc(t(a, AREAS[a] || a));
-
-/* ------------------------------------------------------------------ pages */
-async function pageHome() {
-  shell('home', t('Decisions this month', 'قرارات الشهر'), t('FY2026 = Oct 2025 – Sep 2026. Every number below is computed from the data, with its source.', 'FY2026 = أكتوبر 2025 – سبتمبر 2026. كل رقم تحت محسوب من الداتا ومعاه مصدره.'));
-  const d = await api('/api/overview'); const k = d.kpis;
-  $('#page').innerHTML = `
-  <div class="hero"><div><div style="opacity:.8">${t('Profit on the table, per year', 'ربح ممكن نرجّعه في السنة')}</div><div class="big">+${M(k.profit_at_stake)} ${EGP()} (+${k.uplift_pct.toFixed(0)}%)</div>
-    <p>${t('Cottonil does not need to sell more – it needs its decisions (discounts, marketing, buying, distribution) to follow real demand.',
-           'قطنيل مش محتاجة تبيع أكتر – محتاجة قراراتها (الخصم، والتسويق، والشراء، والتوزيع) تمشي مع الطلب الحقيقي.')}</p></div>
-    <div><a class="btn" style="background:#fff;color:var(--navy)" href="#/problems">${t('See the problems', 'شوف المشاكل')} (${d.problems_open})</a></div></div>
-  <div class="grid g6" style="margin-top:14px">
-    ${kpi(t('Net sales FY2026', 'صافي المبيعات FY2026'), M(k.net_sales), k.net_sales_g)}
-    ${kpi(t('Gross profit', 'إجمالي الربح'), M(k.gross_profit), k.gross_profit_g)}
-    ${kpi(t('Gross margin', 'هامش الربح'), k.margin.toFixed(1) + '%')}
-    ${kpi(t('Pieces sold (real growth)', 'القطع المباعة (النمو الحقيقي)'), K(k.units), k.units_g)}
-    ${kpi(t('Price per piece', 'سعر القطعة'), P(k.price_g, 0), null)}
-    ${kpi(t('Discounts given', 'الخصومات'), M(k.discount), null)}
-  </div>
-  <div class="grid g2" style="margin-top:14px">
-    <div class="card"><h2>${t('This month: 6 decisions', 'الشهر ده: 6 قرارات')}</h2><p class="sub">${t('From the data, in priority order', 'من الداتا، بالترتيب')}</p>
-      <ul class="list">${d.decisions.map((x, i) => `<li><span class="num">${i + 1}</span><div><div><a href="#/${x.link}">${esc(t(x.title, x.title_ar))}</a></div><div class="sub" style="margin:0">${area(x.owner)}</div></div></li>`).join('')}</ul></div>
-    <div class="card"><h2>${t(`4 actions = +${M(d.bridge.new - d.bridge.base)} profit a year`, `4 إجراءات = +${M(d.bridge.new - d.bridge.base)} ربح في السنة`)}</h2><p class="sub">${t('FY2026 gross profit → after the plan (assumptions on each tool page)', 'إجمالي ربح FY2026 ← بعد الخطة (الافتراضات في صفحة كل أداة)')}</p><div id="wf"></div></div>
-  </div>
-  <div class="grid g2" style="margin-top:14px">
-    <div class="card"><h2>${t('Sales ×15 since FY2019 – pieces only ×2.5', 'المبيعات ×15 من FY2019 – والقطع ×2.5 بس')}</h2><p class="sub">${t('Monthly net sales and gross profit, M EGP', 'المبيعات وإجمالي الربح في الشهر، مليون جنيه')}</p><div id="trend"></div></div>
-    <div class="card"><h2>${t('Real growth (pieces) is slowing', 'النمو الحقيقي (القطع) بيبطّأ')}</h2><p class="sub">${t('Growth in pieces sold per fiscal year', 'نمو القطع المباعة لكل سنة مالية')}</p><div id="vol"></div></div>
+function renderShell() {
+  setLang(S.lang);
+  $('#app').innerHTML = `
+  <div class="shell">
+    <aside class="side" id="side">
+      <div class="brand"><div class="mark">ق</div><div><b>${t('Cottonil', 'قطنيل')}</b><span>${t('Manager board', 'لوحة المدير')}</span></div></div>
+      <nav class="nav">${NAV.map(([id, ic, en, ar]) => id === '_' ? `<div class="nav-label">${t(en, ar)}</div>` : `<a href="#/${id}" data-nav="${id}">${I(ic)}<span>${t(en, ar)}</span></a>`).join('')}</nav>
+      <div class="side-foot">
+        <button id="blang">${I('globe')} ${t('العربية', 'English')}</button>
+        <button id="bpass">${I('key')} ${t('Change password', 'تغيير كلمة السر')}</button>
+        <button id="bout">${I('logout')} ${t('Sign out', 'خروج')}</button>
+      </div>
+    </aside>
+    <div class="main">
+      <header class="top no-print"><div class="top-in">
+        <button class="icon-btn menu-btn" id="bmenu">${I('menu')}</button>
+        <label class="ask">${I('spark')}<input id="ask" placeholder="${esc(t('Ask Khayt: “Zamalek branch”, “socks”, “December”…', 'اسأل خيط: "فرع الزمالك"، "الشرابات"، "ديسمبر"…'))}"></label>
+        <div class="spacer"></div>
+        <a class="chip navy" id="cyc" href="#/today">${I('calendar')}<span>…</span></a>
+        <div style="position:relative"><button class="icon-btn" id="bbell">${I('bell')}<span class="dot hidden" id="bdot"></span></button><div class="drop hidden" id="drop"></div></div>
+        <span class="chip">${I('people')} ${t('Manager', 'المدير')}</span>
+      </div></header>
+      <main id="view"></main>
+    </div>
   </div>`;
-  const b = d.bridge;
-  Charts.waterfall($('#wf'), t('FY2026 profit', 'ربح FY2026'), b.base, b.actions.map(a => ({ label: t(a.action, a.action_ar), value: a.profit })), t('New profit', 'الربح الجديد'));
-  const m = d.monthly;
-  Charts.lines($('#trend'), m.map(r => r.month.slice(0, 7)), [
-    { name: t('Net sales', 'المبيعات'), color: Charts.C.blue, values: m.map(r => r.net_sales) },
-    { name: t('Gross profit', 'إجمالي الربح'), color: Charts.C.orange, values: m.map(r => r.gross_profit) }], { ticks: 8 });
-  const fy = d.fy.filter(r => r.units_g != null);
-  Charts.bars($('#vol'), fy.map((r, i) => ({ label: 'FY' + String(r.fy).slice(2), value: r.units_g, text: '+' + r.units_g.toFixed(1) + '%', color: i === fy.length - 1 ? Charts.C.orange : Charts.C.blue })), { fmtY: v => v.toFixed(0) + '%' });
-  if (S.me.must_change) passwordModal(true);
+  $('#blang').onclick = () => { setLang(S.lang === 'ar' ? 'en' : 'ar'); renderShell(); route(); refreshToday(); };
+  $('#bout').onclick = async () => { await post('/api/logout'); S.me = null; renderLogin(); };
+  $('#bpass').onclick = () => passwordModal(false);
+  $('#bmenu').onclick = () => $('#side').classList.toggle('open');
+  $('#ask').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.value.trim()) { location.hash = '#/assistant?q=' + encodeURIComponent(e.target.value.trim()); e.target.value = ''; } });
+  $('#bbell').onclick = e => { e.stopPropagation(); $('#drop').classList.toggle('hidden'); };
+  document.addEventListener('click', e => { if (!e.target.closest('#drop')) $('#drop') && $('#drop').classList.add('hidden'); });
 }
 
-async function pageProblems() {
-  shell('problems', t('Problems & solutions', 'المشاكل والحلول'), t('Every problem with its evidence from the data, the root cause, the solution, the owner and the profit impact. Update the status as you go.',
-    'كل مشكلة بالدليل من الداتا، والسبب، والحل، والمسؤول، وأثرها على الربح. حدّث الحالة وانت ماشي.'));
-  const ps = await api('/api/problems');
-  const total = ps.reduce((a, p) => a + p.impact, 0);
-  $('#page').innerHTML = `<div class="insight">${t(`${ps.length} problems · ${ps.filter(p => p.status === 'Done').length} done · +${M(total)} EGP/year from the ones with a measurable impact. The others are cash or data problems: they unlock the next decisions.`,
-    `${ps.length} مشاكل · ${ps.filter(p => p.status === 'Done').length} خلصت · +${M(total)} جنيه في السنة من اللي أثرها يتقاس. والباقي مشاكل كاش أو داتا: بيفتحوا القرارات الجاية.`)}</div>
-  <div class="grid">${ps.map(p => `<div class="card problem">
-    <div class="head"><div><h3>${p.id} · ${esc(t(p.title, p.title_ar))}</h3>
-      <div class="meta"><span class="chip">${area(p.area)}</span><span class="chip partial">${t('Owner', 'المسؤول')}: ${owner(p.owner)}</span>
-      ${p.impact > 0 ? `<span class="impact">+${M(p.impact)} ${EGP()}/${t('yr', 'سنة')}</span>` : `<span class="chip grey">${t('cash / data', 'كاش / داتا')}</span>`}</div></div>
-      <select data-p="${p.id}" class="field" style="border:1px solid var(--line);border-radius:8px;padding:6px">${['Open', 'In progress', 'Done'].map(s => `<option value="${s}" ${s === p.status ? 'selected' : ''}>${t(s, { Open: 'مفتوحة', 'In progress': 'شغالين عليها', Done: 'خلصت' }[s])}</option>`).join('')}</select></div>
-    <dl><dt>${t('Evidence', 'الدليل')}</dt><dd>${esc(t(p.evidence, p.evidence_ar))}</dd><dt>${t('Root cause', 'السبب')}</dt><dd>${esc(t(p.cause, p.cause_ar))}</dd>
-      <dt>${t('Solution', 'الحل')}</dt><dd><b>${esc(t(p.solution, p.solution_ar))}</b></dd></dl>
-    <div class="foot">${p.tool && p.tool !== 'home' ? `<a class="btn small" href="#/${p.tool}">${t('Open the tool', 'افتح الأداة')} →</a>` : ''}
-      <button class="btn small ghost" data-a="${p.id}">+ ${t('Create an action', 'اعمل مهمة')}</button></div></div>`).join('')}</div>`;
-  document.querySelectorAll('select[data-p]').forEach(s => s.onchange = async () => { await api('/api/problems/' + s.dataset.p, { method: 'POST', body: { status: s.value } }); toast(t('Saved', 'اتحفظ')); });
-  document.querySelectorAll('button[data-a]').forEach(b => b.onclick = async () => {
-    const p = ps.find(x => x.id === b.dataset.a);
-    await api('/api/actions', { method: 'POST', body: { title: t(p.solution, p.solution_ar).slice(0, 180), owner: p.owner, problem: p.id, impact: p.impact } });
-    toast(t('Action added to the tracker', 'المهمة اتضافت للمتابعة'));
+function passwordModal(forced) {
+  modal(`<h2>${forced ? t('Choose your own password', 'اختار كلمة سر خاصة بيك') : t('Change password', 'تغيير كلمة السر')}</h2>
+    <p class="muted small">${forced ? t('This is the first sign-in with the default password.', 'ده أول دخول بكلمة السر الافتراضية.') : ''}</p>
+    <form id="pf" class="grid" style="gap:12px">
+      <div class="field"><label>${t('Current password', 'كلمة السر الحالية')}</label><input type="password" name="old" required></div>
+      <div class="field"><label>${t('New password (8+ characters)', 'كلمة السر الجديدة (8 حروف أو أكتر)')}</label><input type="password" name="new" minlength="8" required></div>
+      <div class="err" id="perr"></div>
+      <div class="modal-actions">${forced ? '' : `<button type="button" class="btn" data-close>${t('Cancel', 'إلغاء')}</button>`}<button class="btn primary">${t('Save', 'حفظ')}</button></div>
+    </form>`, (root, close) => {
+    $('#pf', root).onsubmit = async e => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      try { await post('/api/password', { old: f.get('old'), new: f.get('new') }); close(); toast(t('Password changed', 'اتغيرت كلمة السر')); }
+      catch (err) { $('#perr', root).textContent = err.message; }
+    };
   });
 }
 
-function slider(id, label, min, max, step, value, unit = '%') {
-  return `<div class="field"><label>${label}</label><div class="range-row"><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${value}"><output id="${id}o">${value}${unit}</output></div></div>`;
+async function refreshToday() {
+  try { S.today = await api('/api/today'); } catch (e) { return; }
+  const c = S.today.cycle;
+  const el = $('#cyc');
+  if (el) $('span', el).innerHTML = `${t('Cycle', 'دورة')} ${monOnly(c.month)} · ${N(`${c.done}/${c.items.length}`)}`;
+  const dot = $('#bdot');
+  if (dot) { dot.textContent = S.today.alerts.length; dot.classList.toggle('hidden', !S.today.alerts.length); }
+  const drop = $('#drop');
+  if (drop) drop.innerHTML = `<div style="padding:6px 8px 8px" class="small muted">${t('Alerts from the numbers', 'تنبيهات من الأرقام')}</div>` + alertsHTML(S.today.alerts);
 }
-function bindSlider(id, unit, fn) { const el = $('#' + id); el.oninput = () => { $('#' + id + 'o').textContent = el.value + unit; }; el.onchange = fn; }
 
-async function pagePurchase() {
-  shell('purchase', t('Purchase plan from the AI forecast', 'خطة الشراء من توقّع الـ AI'), t('Today Cottonil buys a fixed ~42M pieces a year, the same for every SKU. This plan buys what the forecast says we will sell.',
-    'النهارده قطنيل بتشتري كمية ثابتة حوالي 42 مليون قطعة في السنة، ونفس الكمية لكل SKU. الخطة دي بتشتري اللي التوقّع بيقول هنبيعه.'));
-  const draw = async () => {
-    const svc = $('#svc')?.value || '95', trust = $('#trust')?.checked ? 1 : 0;
-    const d = await api(`/api/tools/purchase?service=${svc}&trust=${trust}`);
-    const tot = d.plan.reduce((a, r) => ({ f: a.f + r.forecast_3m, b: a.b + r.to_buy, c: a.c + r.current_pattern_buys }), { f: 0, b: 0, c: 0 });
-    $('#out').innerHTML = `<div class="grid g4">${kpi(t('Demand ' + d.months[0] + ' – ' + d.months[d.months.length - 1], 'الطلب ' + d.months[0] + ' – ' + d.months[d.months.length - 1]), K(tot.f))}${kpi(t('Plan: buy', 'الخطة: نشتري'), K(tot.b))}
-      ${kpi(t('Current pattern per quarter', 'النمط الحالي في الربع'), M(tot.c))}${kpi(t('AI is more accurate by', 'الـ AI أدق بـ'), d.backtest['better_%'].toFixed(0) + '%')}</div>
-      <div class="grid g2" style="margin-top:14px"><div class="card"><h2>${t('Backtest on 6 hidden months', 'اختبار على 6 شهور مخفية')}</h2>
-        <p class="sub">${t(`AI error ${d.backtest.wape_model}% vs ${d.backtest.wape_naive}% for "same month last year"`, `خطأ الـ AI ${d.backtest.wape_model}% مقابل ${d.backtest.wape_naive}% لـ "زي السنة اللي فاتت"`)}</p><div id="bt"></div></div>
-      <div class="card"><h2>${t('What to buy, per category', 'نشتري إيه لكل فئة')}</h2><p class="sub">${t('pieces, next 3 months', 'قطع، التلات شهور الجايين')}</p><div id="cat"></div></div></div>
-      <div class="card" style="margin-top:14px"><h2>${t('The plan', 'الخطة')}</h2><p class="sub">${t('to buy = forecast + safety stock' + (trust ? ' − stock on hand' : ''), 'نشتري = التوقّع + مخزون أمان' + (trust ? ' − المخزون الحالي' : ''))}</p>
-      ${table(d.plan, [{ key: 'category_en', label: t('Category', 'الفئة') }, { key: 'forecast_3m', label: t('Forecast 3m', 'توقّع 3 شهور'), n: 1, f: N },
-        { key: 'safety_stock', label: t('Safety', 'أمان'), n: 1, f: N }, { key: 'stock_on_hand', label: t('Stock on hand', 'المخزون الحالي'), n: 1, f: N },
-        { key: 'to_buy', label: t('To buy', 'نشتري'), n: 1, f: v => `<b>${N(v)}</b>` }, { key: 'current_pattern_buys', label: t('Current pattern', 'النمط الحالي'), n: 1, f: N }])}
-      <div style="margin-top:12px;display:flex;gap:8px"><a class="btn small" href="/api/export/purchase_plan.csv">⬇️ CSV</a>
-      <button class="btn small ghost" id="approve">✅ ${t('Approve → action tracker', 'اعتمد ← المتابعة')}</button></div></div>`;
-    const bt = d.backtest_total;
-    Charts.lines($('#bt'), bt.map(r => r.month.slice(0, 7)), [
-      { name: t('actual', 'الحقيقي'), color: Charts.C.ink, values: bt.map(r => r.units) },
-      { name: t('AI model', 'الموديل'), color: Charts.C.blue, values: bt.map(r => r.model) },
-      { name: t('same month last year', 'زي السنة اللي فاتت'), color: Charts.C.grey, values: bt.map(r => r.naive), dash: 1 }], { dots: 1 });
-    Charts.hbars($('#cat'), d.plan.slice(0, 10).map(r => ({ label: r.category_en, value: r.to_buy })));
-    $('#approve').onclick = async () => { await api('/api/actions', { method: 'POST', body: { title: `Approved purchase plan ${d.months[0]} – ${d.months[d.months.length - 1]}: ${N(tot.b)} pieces (service ${svc}%)`, owner: 'supply', problem: 'P04' } }); toast(t('Added to the action tracker', 'اتضافت للمتابعة')); };
+const alertsHTML = list => list.map(a => `<a class="alert ${a.level}" href="${a.link}"><div class="ic">${I(a.icon)}</div><div><b>${N(t(a.en, a.ar))}</b><span>${N(t(a.sub_en, a.sub_ar))}</span></div><div class="go">${I('arrow')}</div></a>`).join('');
+
+async function startApp() {
+  S.meta = await api('/api/meta');
+  renderShell();
+  if (!location.hash || location.hash === '#/' || location.hash === '#') location.hash = '#/today';
+  await route();
+  refreshToday();
+  if (S.me.must_change) passwordModal(true);
+}
+
+async function boot() {
+  setLang(S.lang);
+  try { S.me = await api('/api/me'); await startApp(); } catch (e) { if (!S.me) renderLogin(); }
+  window.addEventListener('hashchange', () => { if (S.me) route(); });
+}
+
+// ---------------------------------------------------------------- router
+const ROUTES = [];
+const page = (re, fn, nav) => ROUTES.push([re, fn, nav]);
+async function route() {
+  const [path, qs] = location.hash.split('?');
+  const q = new URLSearchParams(qs || '');
+  const r = ROUTES.find(([re]) => re.test(path)) || ROUTES[0];
+  const m = path.match(r[0]) || [];
+  $$('[data-nav]').forEach(a => a.classList.toggle('on', a.dataset.nav === r[2]));
+  $('#side') && $('#side').classList.remove('open');
+  const view = $('#view');
+  view.innerHTML = `<div class="page"><div class="loading">${t('Loading…', 'بيحمّل…')}</div></div>`;
+  window.scrollTo(0, 0);
+  try { await r[1](view, q, ...m.slice(1)); }
+  catch (e) { if (e.message !== 'login') view.innerHTML = `<div class="page"><div class="card">${esc(e.message)}</div></div>`; }
+}
+
+// ---------------------------------------------------------------- Today
+page(/^#\/today$/, async (view) => {
+  const d = await api('/api/today');
+  S.today = d;
+  const k = d.kpis, c = d.cycle;
+  const h = new Date().getHours();
+  const hello = h < 12 ? t('Good morning', 'صباح الخير') : t('Good evening', 'مساء الخير');
+  view.innerHTML = `<div class="page">
+    <div class="head hello"><div><h1>${hello}</h1><p>${dateLong(d.today)} · ${t('data complete to', 'الداتا كاملة لحد')} ${mon(S.meta.data_to)}</p></div>
+      <div class="actions"><a class="btn" href="#/report">${I('file')} ${t('Monthly report', 'تقرير الشهر')}</a></div></div>
+    <div class="grid g4">
+      ${kpi(t(`Expected demand · ${monOnly(c.month)}`, `الطلب المتوقع · ${monOnly(c.month)}`), N(nf(k.next_month_demand)), t(`pieces · ${big(k.quarter_demand)} for the quarter`, `قطعة · ${big(k.quarter_demand)} للربع`), true, 'target')}
+      ${kpi(t('Net sales FY2026', 'صافي المبيعات FY2026'), N(big(k.net_sales)), `<span class="up">${N(sign(k.net_sales_g) + '%')}</span> ${t('vs FY2025', 'عن FY2025')}`)}
+      ${kpi(t('Real growth (pieces)', 'النمو الحقيقي (قطع)'), N(sign(k.units_g, 1) + '%'), t(`the rest is price: ${sign(k.price_g)}% per piece`, `والباقي سعر: ${sign(k.price_g)}% في القطعة`))}
+      ${kpi(t('Gross margin', 'هامش الربح الإجمالي'), N(nf(k.margin, 1) + '%'), t('FY2026', 'FY2026'))}
+    </div>
+    <div class="grid g-7-5 mt">
+      <div class="card">
+        <div class="cycle-top">${Charts.ring(c.done / c.items.length)}<div><h3>${t(`${mon(c.month)} cycle`, `دورة ${mon(c.month)}`)}</h3>
+          <p class="sub" style="margin:0">${t(`${c.done} of ${c.items.length} done · each item opens the page that does it`, `${c.done} من ${c.items.length} اتعملوا · كل بند بيفتح الصفحة اللي بتعمله`)}</p></div></div>
+        <div id="tasks">${c.items.map(i => `
+          <div class="task ${i.done ? 'done' : ''}">
+            ${i.auto ? `<span class="st ${i.done ? 'done' : ''}">${i.done ? I('check') : ''}</span>` : `<button class="st ${i.done ? 'done' : ''}" data-check="${i.id}" data-done="${i.done ? 1 : 0}" title="${t('mark', 'علّم')}">${i.done ? I('check') : ''}</button>`}
+            <div class="tx"><b>${N(t(i.en, i.ar))}</b><span>${i.when ? t('saved ', 'اتحفظت ') + N(i.when) : N(t(i.hint_en, i.hint_ar))}</span></div>
+            <a class="btn sm ${i.done ? '' : 'primary'}" href="${i.link}">${i.done ? t('View', 'عرض') : t('Open', 'افتح')}</a>
+          </div>`).join('')}</div>
+      </div>
+      <div class="card"><h3>${t('Alerts from the numbers', 'تنبيهات من الأرقام')}</h3><p class="sub">${t('They change when the data changes.', 'بتتغير لما الداتا تتغير.')}</p>${alertsHTML(d.alerts)}</div>
+    </div>
+    <div class="card mt"><div class="card-head"><div><h3>${t('Monthly demand – last two years and the next four months', 'الطلب الشهري – آخر سنتين والـ 4 شهور الجاية')}</h3>
+      <p class="sub">${t('pieces sold, all channels · forecast = the AI model tested on 6 hidden months', 'القطع المتباعة في كل القنوات · التوقّع = موديل الـ AI اللي اتختبر على 6 شهور مخفية')}</p></div></div><div id="cdem"></div></div>
+    <div class="grid g-7-5 mt">
+      <div class="card"><div class="card-head"><div><h3>${t('Branches to visit for the stock count', 'فروع للجرد')}</h3><p class="sub">${t('largest gap between what was sent and what was sold or is on the shelf', 'أكبر فرق بين اللي اتبعت واللي اتباع أو على الرف')}</p></div>
+        <a class="btn sm ghost" href="#/branches?sort=gap">${t('All branches', 'كل الفروع')}</a></div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('Branch', 'الفرع')}</th><th>${t('Governorate', 'المحافظة')}</th><th class="n">${t('Pieces not accounted for', 'قطع مش متحسوبة')}</th><th class="n">${t('Stock cover', 'المخزون يكفي')}</th></tr></thead>
+        <tbody>${d.watch.map(b => `<tr class="click" data-go="#/branches/${b.branch_id}"><td><b>${esc(b.branch_name_ar)}</b> <span class="muted small">${b.branch_id}</span></td><td>${esc(b.governorate_ar)}</td><td class="n">${nf(b.stock_gap)}</td><td class="n">${nf(b.months_cover, 1)} ${t('mo', 'شهر')}</td></tr>`).join('')}</tbody></table></div>
+      </div>
+      <div class="card"><h3>${t('Latest saved work', 'آخر حاجات اتحفظت')}</h3><p class="sub">${t('plans, policy and tests saved on this board', 'الخطط والسياسة والتجارب اللي اتحفظت هنا')}</p>
+        ${d.log.length ? `<ul class="log">${d.log.map(l => `<li><span class="num">${esc(l.when)}</span><span>${N(S.lang === 'ar' && l.what_ar ? l.what_ar : l.what)}</span></li>`).join('')}</ul>` : `<p class="muted">${t('Nothing saved yet – start with the purchase plan.', 'لسه مفيش حاجة اتحفظت – ابدأ بخطة الشراء.')}</p>`}
+      </div>
+    </div></div>`;
+  const hist = Object.entries(d.demand.hist), fc = Object.entries(d.demand.forecast);
+  const labels = [...hist.map(x => x[0]), ...fc.map(x => x[0])].map(monShort);
+  const actual = [...hist.map(x => x[1]), ...fc.map(() => null)];
+  const fcs = [...hist.map((x, i) => (i === hist.length - 1 ? x[1] : null)), ...fc.map(x => x[1])];
+  Charts.lines($('#cdem'), labels, [{ name: t('actual', 'الحقيقي'), color: Charts.C.navy, values: actual }, { name: t('forecast', 'التوقّع'), color: Charts.C.teal, values: fcs, dash: true, dots: true }],
+    { height: 260, shadeFrom: hist.length, shadeLabel: t('forecast', 'التوقّع') });
+  $$('[data-check]', view).forEach(b => b.onclick = async () => { await post('/api/checks', { item: b.dataset.check, done: b.dataset.done !== '1' }); route(); refreshToday(); });
+  $$('[data-go]', view).forEach(r => r.onclick = () => { location.hash = r.dataset.go; });
+}, 'today');
+
+// ---------------------------------------------------------------- Assistant «خيط»
+const SUGG = [['What should we do this month?', 'نعمل إيه الشهر ده؟'], ['Zamalek branch', 'فرع الزمالك'], ['Socks', 'الشرابات'], ['December', 'ديسمبر'],
+  ['Cairo', 'القاهرة'], ['Stock', 'المخزون'], ['Discounts', 'الخصم'], ['Marketing budget', 'ميزانية التسويق']];
+page(/^#\/assistant$/, async (view, q) => {
+  view.innerHTML = `<div class="page" style="max-width:900px">
+    <div class="card chat">
+      <div class="chat-head"><div class="bot">${I('spark')}</div><div><h3>${t('Khayt', 'خيط')}</h3><p class="sub" style="margin:0">${t('Answers from Cottonil’s numbers and opens the right page.', 'بيجاوب من أرقام قطنيل ويفتحلك الصفحة الصح.')}</p></div></div>
+      <div class="msgs" id="msgs"></div>
+      <div class="sugg">${SUGG.map(s => `<button data-q="${esc(t(s[0], s[1]))}">${esc(t(s[0], s[1]))}</button>`).join('')}</div>
+      <form class="chat-in" id="cf"><input class="input" id="cq" placeholder="${t('Ask about a branch, a category, a governorate, a month…', 'اسأل عن فرع، فئة، محافظة، شهر…')}" autocomplete="off"><button class="btn primary">${I('send', 'flip')}</button></form>
+    </div></div>`;
+  const draw = () => {
+    const el = $('#msgs');
+    el.innerHTML = (S.chat.length ? S.chat : [{ me: false, answer: t('Hi, I am Khayt. Ask me about any branch, category, governorate or month – I answer from the data and open the page that acts on it.',
+      'أهلاً، أنا خيط. اسألني عن أي فرع أو فئة أو محافظة أو شهر – بجاوب من الداتا وبفتحلك الصفحة اللي تتصرف منها.'), facts: [], links: [] }])
+      .map(m => m.me ? `<div class="msg me">${esc(m.q)}</div>` : `<div class="msg"><div>${N(m.answer)}</div>
+        ${m.facts && m.facts.length ? `<div class="facts">${m.facts.map(f => `<div><span>${esc(f[0])}</span><b class="num">${esc(f[1])}</b></div>`).join('')}</div>` : ''}
+        ${m.links && m.links.length ? `<div class="links">${m.links.map(l => `<a class="btn sm" href="${l.href}">${esc(t(l.en, l.ar))} ${I('arrow', 'flip')}</a>`).join('')}</div>` : ''}</div>`).join('');
+    el.scrollTop = el.scrollHeight;
   };
-  $('#page').innerHTML = `<div class="card"><div class="controls">
-    <div class="field"><label>${t('Service level', 'مستوى الخدمة')}</label><select id="svc">${['90', '95', '98', '99'].map(v => `<option ${v === '95' ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
-    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="trust"> ${t('Subtract stock on hand (only after a stock count)', 'نطرح المخزون الحالي (بعد الجرد بس)')}</label></div>
-    <div class="note">${t('The stock table is not reliable yet (9.3M pieces not accounted for), so by default we do not subtract it.', 'جدول المخزون لسه مش موثوق (9.3 مليون قطعة مش متحسوبة)، فافتراضيًا مش بنطرحه.')}</div></div><div id="out" style="margin-top:14px"><div class="loading">…</div></div>`;
-  $('#svc').onchange = draw; $('#trust').onchange = draw; draw();
-}
-
-async function pageAllocation() {
-  shell('allocation', t('Branch allocation', 'توزيع البضاعة على الفروع'), t('Send each branch November’s forecast for its categories (its FY2026 share) + safety – instead of a fixed quantity.',
-    'نبعت لكل فرع توقّع نوفمبر لفئاته (حسب نصيبه في FY2026) + أمان – بدل كمية ثابتة.'));
-  let branch = null;
-  const draw = async () => {
-    const safety = $('#sf')?.value || 10;
-    const d = await api(`/api/tools/allocation?safety=${safety}` + (branch ? `&branch=${branch}` : ''));
-    branch = d.branch;
-    const s = d.saving, sum = d.rows.reduce((a, r) => ({ n: a.n + r.send_next_month, o: a.o + r.sent_per_month_FY2026 }), { n: 0, o: 0 });
-    $('#out').innerHTML = `<div class="grid g4">${kpi(t('Pieces moved / year', 'قطع بتتنقل في السنة'), K(s.need) + ' ← ' + K(s.sent))}${kpi(t('Fewer pieces moved', 'قطع أقل'), (-s.cut_pct).toFixed(0) + '%')}
-      ${kpi(t('Fewer transfers / year', 'تحويلات أقل في السنة'), N(s.transfers - s.new_transfers))}${kpi(t('Transport saved / year', 'توفير النقل في السنة'), M(s.saving))}</div>
-      <div class="grid g2" style="margin-top:14px"><div class="card"><h2>${t('Socks: 27% of sales, 55% of shipments', 'الشرابات: 27% من البيع و 55% من المبعوت')}</h2><p class="sub">${t('% of pieces sold vs sent, FY2019–FY2026', '% من القطع المتباعة مقابل المبعوتة')}</p><div id="mix"></div></div>
-      <div class="card"><h2>${t('Branch', 'الفرع')} <select id="br">${d.branches.map(b => `<option value="${b.branch_id}" ${b.branch_id === branch ? 'selected' : ''}>${b.branch_id} · ${esc(b.branch_name_ar)}</option>`).join('')}</select></h2>
-        <p class="sub">${t(`November 2026: ${N(sum.n)} pieces vs ${N(sum.o)} sent per month in FY2026`, `نوفمبر 2026: ${N(sum.n)} قطعة مقابل ${N(sum.o)} في الشهر في FY2026`)}</p>
-        ${table(d.rows, [{ key: 'category_en', label: t('Category', 'الفئة') }, { key: 'send_next_month', label: t('Send in Nov', 'نبعت في نوفمبر'), n: 1, f: v => `<b>${N(v)}</b>` },
-          { key: 'sent_per_month_FY2026', label: t('Sent / month FY2026', 'المبعوت/شهر FY2026'), n: 1, f: N }])}
-        <div style="margin-top:12px"><a class="btn small" href="/api/export/allocation_plan.csv">⬇️ ${t('All branches (CSV)', 'كل الفروع (CSV)')}</a></div></div></div>`;
-    const mix = d.mix.slice(0, 8);
-    $('#mix').innerHTML = '<div id="m1"></div><div class="legend"><span style="--c:#2a78d6">' + t('sold', 'متباع') + '</span><span style="--c:#eb6834">' + t('sent', 'مبعوت') + '</span></div>';
-    Charts.hbars($('#m1'), mix.flatMap(r => [{ label: r.category_en, value: r.sold_pct, text: r.sold_pct.toFixed(0) + '%', color: Charts.C.blue },
-      { label: '', value: r.sent_pct, text: r.sent_pct.toFixed(0) + '%', color: Charts.C.orange }]), { row: 18 });
-    $('#br').onchange = e => { branch = e.target.value; draw(); };
+  const ask = async (text) => {
+    if (!text) return;
+    S.chat.push({ me: true, q: text });
+    draw();
+    const a = await post('/api/assistant', { q: text, lang: S.lang });
+    S.chat.push(a);
+    draw();
   };
-  $('#page').innerHTML = `<div class="card"><div class="controls">${slider('sf', t('Branch safety stock', 'مخزون أمان الفرع'), 0, 50, 5, 10)}</div></div><div id="out" style="margin-top:14px"><div class="loading">…</div></div>`;
-  bindSlider('sf', '%', draw); draw();
-}
+  $('#cf').onsubmit = e => { e.preventDefault(); const v = $('#cq').value.trim(); $('#cq').value = ''; ask(v); };
+  $$('[data-q]', view).forEach(b => b.onclick = () => ask(b.dataset.q));
+  draw();
+  if (q.get('q')) { const v = q.get('q'); history.replaceState(null, '', '#/assistant'); ask(v); }
+}, 'assistant');
 
-async function pageDiscount() {
-  shell('discount', t('Discount guardrail', 'قواعد الخصم'), t('Discounts are random today (54% of lines, every month) and sell no extra pieces. Check any discount against the rule before it is given.',
-    'الخصم النهارده عشوائي (54% من السطور، كل شهر) ومش بيبيع قطع زيادة. راجع أي خصم على القاعدة قبل ما يتدّى.'));
-  $('#page').innerHTML = `<div class="grid g2"><div class="card"><h2>${t('Check a discount', 'راجع خصم')}</h2>
-      <div class="controls"><div class="field"><label>${t('Product price (EGP)', 'سعر المنتج (جنيه)')}</label><input id="pr" type="number" value="400" min="1"></div></div>
-      ${slider('ds', t('Discount asked', 'الخصم المطلوب'), 0, 40, 1, 15)}${slider('mx', t('Rule: max without approval', 'القاعدة: أقصى خصم من غير موافقة'), 0, 30, 1, 10)}${slider('fl', t('Rule: floor margin', 'القاعدة: أقل هامش'), 10, 40, 1, 30)}
-      <div id="vd"></div></div>
-    <div class="card"><h2>${t('Every discount band cuts margin – none sells more', 'كل شريحة خصم بتقلل الهامش – ومفيش واحدة بتبيع أكتر')}</h2><p class="sub">${t('gross margin % by discount on the line (pieces per line on hover)', 'هامش الربح حسب الخصم على السطر')}</p><div id="bands"></div>
-      ${slider('st', t('Stop this share of random discounts', 'نوقف النسبة دي من الخصم العشوائي'), 0, 100, 5, 75)}<div id="gain"></div></div></div>`;
-  const draw = async () => {
-    const q = `price=${$('#pr').value}&discount=${$('#ds').value}&max_discount=${$('#mx').value}&floor_margin=${$('#fl').value}&stop=${$('#st').value}`;
-    const d = await api('/api/tools/discount?' + q);
-    const cls = { Approve: 'ok', 'Needs approval': 'warn', Reject: 'no' }[d.verdict];
-    $('#vd').innerHTML = `<div class="verdict ${cls}">${t(d.verdict, { Approve: 'موافقة', 'Needs approval': 'محتاج موافقة المدير', Reject: 'مرفوض' }[d.verdict])}</div>
-      <p class="sub" style="margin-top:10px">${t(`Net price ${N(d.net_price)} EGP · margin ${d.margin.toFixed(1)}% (cost ≈ ${(d.cost_ratio * 100).toFixed(0)}% of list price for every product)`,
-        `السعر بعد الخصم ${N(d.net_price)} جنيه · الهامش ${d.margin.toFixed(1)}% (التكلفة حوالي ${(d.cost_ratio * 100).toFixed(0)}% من السعر لكل المنتجات)`)}</p>`;
-    Charts.bars($('#bands'), d.bands.map((r, i) => ({ label: r.band || r.index, value: r.margin_pct, text: r.margin_pct.toFixed(1) + '% · ' + r.avg_pieces.toFixed(2), color: i ? Charts.C.orange : Charts.C.blue })), { fmtY: v => v.toFixed(0) + '%', height: 230 });
-    const f = d.facts;
-    $('#gain').innerHTML = `<div class="grid g2">${kpi(t('Extra profit / year', 'ربح زيادة في السنة'), M(d.gain))}${kpi(t('Pieces per line with / without', 'قطع في السطر بخصم/من غير'), f.pieces_with.toFixed(2) + ' / ' + f.pieces_without.toFixed(2))}</div>`;
-  };
-  ['ds', 'mx', 'fl', 'st'].forEach(id => bindSlider(id, '%', draw));
-  $('#pr').onchange = draw; draw();
-}
-
-async function pageMarketing() {
-  shell('marketing', t('Marketing budget & holdout test', 'ميزانية التسويق وتجربة الـ Holdout'), t('Campaigns claim far more orders than exist and the budget ignores demand. Plan the budget by demand and prove what works with a holdout test.',
-    'الحملات بتنسب لنفسها طلبات أكتر بكتير من الحقيقي، والميزانية مش ماشية مع الطلب. نخطط الميزانية حسب الطلب ونثبت اللي شغال بتجربة Holdout.'));
-  $('#page').innerHTML = `<div class="card"><div class="controls">${slider('ct', t('Cut spend with no measured effect', 'نقلل الصرف اللي ملوش أثر'), 0, 50, 5, 25)}${slider('ho', t('Keep for holdout tests', 'نسيب لتجارب الـ Holdout'), 0, 30, 5, 10)}</div></div><div id="out" style="margin-top:14px"><div class="loading">…</div></div>`;
-  const draw = async () => {
-    const d = await api(`/api/tools/marketing?cut=${$('#ct').value}&holdout=${$('#ho').value}`);
-    $('#out').innerHTML = `<div class="grid g4">${kpi(t('FY2026 spend', 'صرف FY2026'), M(d.spend26))}${kpi(t('New budget', 'الميزانية الجديدة'), M(d.budget))}${kpi(t('Saved / year', 'توفير في السنة'), M(d.saved))}
-      ${kpi(t('Claimed ÷ real orders', 'المنسوب ÷ الحقيقي'), '×' + d.claimed_x.toFixed(0))}</div>
-      <div class="grid g2" style="margin-top:14px"><div class="card"><h2>${t('Budget that follows demand', 'ميزانية ماشية مع الطلب')}</h2><p class="sub">${t('per governorate, M EGP: today vs plan', 'لكل محافظة، مليون جنيه: النهارده مقابل الخطة')}</p>
-        ${table(d.gov.slice(0, 12), [{ key: 'governorate_ar', label: t('Governorate', 'المحافظة') }, { key: 'order_share', label: t('% orders', '% الطلبات'), n: 1, f: v => v.toFixed(1) + '%' },
-          { key: 'spend', label: t('Today', 'النهارده'), n: 1, f: v => (v / 1e6).toFixed(2) }, { key: 'new_budget', label: t('Plan', 'الخطة'), n: 1, f: v => `<b>${(v / 1e6).toFixed(2)}</b>` }])}</div>
-      <div class="card"><h2>${t('The holdout test (4 weeks)', 'تجربة الـ Holdout (4 أسابيع)')}</h2><p class="sub">${t('In each pair of similar governorates, pause ads in the first one; compare real orders after 4 weeks. The difference = what marketing really brings.',
-        'في كل زوج محافظات شبه بعض، نوقف الإعلان في الأولى؛ ونقارن الطلبات الحقيقية بعد 4 أسابيع. الفرق = اللي التسويق بيجيبه فعلًا.')}</p>
-        ${table(d.pairs, [{ key: 'a', label: t('Pause ads', 'نوقف الإعلان') }, { key: 'orders_a', label: t('orders', 'طلبات'), n: 1, f: N }, { key: 'b', label: t('Keep ads', 'نكمل الإعلان') }, { key: 'orders_b', label: t('orders', 'طلبات'), n: 1, f: N }])}
-        <div class="note">${t(`One ledger first: marketing is ${M(d.ledger)} in the expense ledger vs ${M(d.campaigns)} in the campaign table.`, `دفتر واحد الأول: التسويق ${M(d.ledger)} في دفتر المصاريف مقابل ${M(d.campaigns)} في جدول الحملات.`)}</div></div></div>
-      <div class="card" style="margin-top:14px"><h2>${t('All channels cost about the same per click', 'كل القنوات تكلفة الضغطة فيها تقريبًا واحدة')}</h2><p class="sub">${t('cost per click, EGP – the data cannot say which channel works; only a test can', 'تكلفة الضغطة بالجنيه – الداتا متقدرش تقول أنهي قناة شغالة؛ التجربة بس اللي تقدر')}</p><div id="cpc"></div></div>`;
-    Charts.bars($('#cpc'), d.channels.map(r => ({ label: r.channel, value: r.cpc, text: r.cpc.toFixed(2) })), { height: 220, fmtY: v => v.toFixed(2) });
-  };
-  bindSlider('ct', '%', draw); bindSlider('ho', '%', draw); draw();
-}
-
-async function pageShipping() {
-  shell('shipping', t('Free-shipping rule', 'قاعدة الشحن المجاني'), t('Free shipping goes to 14% of online orders of every size – even 13 EGP orders. Set a minimum order.',
-    'الشحن المجاني بيروح لـ 14% من طلبات الأونلاين من كل الأحجام – حتى طلب بـ 13 جنيه. نحط حد أدنى للطلب.'));
-  $('#page').innerHTML = `<div class="card"><div class="controls">${slider('th', t('Free shipping only above (EGP)', 'شحن مجاني بس فوق (جنيه)'), 250, 2500, 250, 1000, '')}</div></div><div id="out" style="margin-top:14px"></div>`;
-  const draw = async () => {
-    const d = await api('/api/tools/shipping?threshold=' + $('#th').value);
-    $('#out').innerHTML = `<div class="grid g3">${kpi(t('Free shipments below the threshold / year', 'شحنات مجانية تحت الحد في السنة'), N(d.free_below))}${kpi(t('Fees recovered / year', 'رسوم بترجع في السنة'), N(d.saved) + ' ' + EGP())}${kpi(t('Average fee', 'متوسط الرسوم'), d.avg_fee.toFixed(0) + ' ' + EGP())}</div>
-      <div class="card" style="margin-top:14px"><h2>${t('Share shipped free, by order size', 'نسبة الشحن المجاني حسب حجم الطلب')}</h2><div id="fs"></div>
-      <div class="insight">${t('Small money, but a clear and fair rule – and it removes a random decision.', 'فلوس صغيرة، بس قاعدة واضحة وعادلة – وبتشيل قرار عشوائي.')}</div></div>`;
-    Charts.bars($('#fs'), Object.entries(d.free_by_size).map(([k, v]) => ({ label: k, value: v, text: v.toFixed(0) + '%' })), { height: 230, fmtY: v => v.toFixed(0) + '%' });
-  };
-  bindSlider('th', '', draw); draw();
-}
-
-async function pageActions() {
-  shell('actions', t('Action tracker', 'متابعة المهام'), t('Every solution becomes a task with an owner and a date. Saved on the server for all managers.', 'كل حل بيبقى مهمة ليها مسؤول وميعاد. محفوظة على السيرفر لكل المديرين.'));
-  const d = await api('/api/actions');
-  const cols = [['To do', t('To do', 'هنعمل')], ['In progress', t('In progress', 'شغالين')], ['Done', t('Done', 'خلصت')]];
-  const next = { 'To do': 'In progress', 'In progress': 'Done', Done: 'To do' };
-  $('#page').innerHTML = `<form class="card controls" id="add" style="margin-bottom:14px">
-      <div class="field" style="flex:2;min-width:240px"><label>${t('New task', 'مهمة جديدة')}</label><input name="title" required placeholder="${t('e.g. Count stock in BR012', 'مثلًا: جرد فرع BR012')}"></div>
-      <div class="field"><label>${t('Owner', 'المسؤول')}</label><select name="owner">${d.owners.map(o => `<option value="${o.username}">${esc(t(o.name, o.name_ar))}</option>`).join('')}</select></div>
-      <div class="field"><label>${t('Due', 'الميعاد')}</label><input name="due" type="date"></div><button class="btn">${t('Add', 'إضافة')}</button></form>
-    <div class="kanban">${cols.map(([k, label]) => `<div class="col"><h3>${label}<span>${d.actions.filter(a => a.status === k).length}</span></h3>
-      ${d.actions.filter(a => a.status === k).map(a => `<div class="task"><div class="t">${esc(a.title)}</div>
-        <div class="m"><span>👤 ${owner(a.owner)}</span>${a.due ? `<span>📅 ${esc(a.due)}</span>` : ''}${a.impact > 0 ? `<span class="impact">+${M(a.impact)}</span>` : ''}${a.problem ? `<span>${esc(a.problem)}</span>` : ''}</div>
-        <div class="b"><button data-mv="${a.id}" data-to="${next[k]}">${k === 'Done' ? '↺' : '→'} ${t(next[k], { 'In progress': 'شغالين', Done: 'خلصت', 'To do': 'هنعمل' }[next[k]])}</button><button data-del="${a.id}">🗑</button></div></div>`).join('')}</div>`).join('')}</div>
-    <div class="card" style="margin-top:14px"><h2>${t('Activity', 'آخر التحديثات')}</h2><ul class="list">${d.log.map(l => `<li><span class="sub" style="margin:0;min-width:130px">${esc(l.when)}</span><span>${owner(l.who)}: ${esc(l.what)}</span></li>`).join('') || '<li>—</li>'}</ul></div>`;
-  $('#add').onsubmit = async e => { e.preventDefault(); const f = new FormData(e.target); await api('/api/actions', { method: 'POST', body: Object.fromEntries(f) }); pageActions(); };
-  document.querySelectorAll('[data-mv]').forEach(b => b.onclick = async () => { await api('/api/actions/' + b.dataset.mv, { method: 'PUT', body: { status: b.dataset.to } }); pageActions(); });
-  document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/api/actions/' + b.dataset.del, { method: 'DELETE' }); pageActions(); });
-}
-
-async function pageGaps() {
-  shell('gaps', t('Data gaps & requests', 'ثغرات الداتا والطلبات'), t('HVIA proposed 22 apps. We checked each one against the data: what is ready, what is partial, what is impossible – and what data would unlock it.',
-    'HVIA اقترحوا 22 تطبيق. راجعنا كل واحد على الداتا: إيه الجاهز، وإيه الجزئي، وإيه المستحيل – وإيه الداتا اللي تفتحه.'));
-  const d = await api('/api/gaps');
-  const ready = d.readiness.filter(r => /^Ready/.test(r.status)).length;
-  $('#page').innerHTML = `<div class="grid g4">${kpi(t('Ideas fully supported', 'أفكار الداتا بتشيلها'), ready + ' / 22')}${kpi(t('Partial', 'جزئي'), d.readiness.filter(r => r.status === 'Partial').length)}
-      ${kpi(t('Data issues logged', 'مشاكل داتا متسجلة'), d.dq.length)}${kpi(t('Requests received', 'طلبات وصلت'), d.requests.filter(r => r.status === 'Received').length + ' / ' + d.requests.length)}</div>
-    <div class="card" style="margin-top:14px"><h2>${t('What we need from the company', 'محتاجين إيه من الشركة')}</h2>
-      ${table(d.requests, [{ key: 'priority', label: t('Priority', 'الأولوية'), f: v => sevChip(v === 'Low' ? 'Unreliable' : v === 'High' ? 'High' : 'Medium').replace(/>[^<]+</, `>${t(v, { High: 'عالية', Medium: 'متوسطة', Low: 'قليلة' }[v])}<`) },
-        { key: 'area', label: t('Area', 'المجال') }, { key: 'request', label: t('Request', 'الطلب'), f: (v, r) => esc(t(v, r.request_ar)) },
-        { key: 'status', label: t('Status', 'الحالة'), f: (v, r) => `<select data-r="${r.id}">${['To request', 'Requested', 'Received'].map(s => `<option value="${s}" ${s === v ? 'selected' : ''}>${t(s, { 'To request': 'لسه', Requested: 'اتطلب', Received: 'وصل' }[s])}</option>`).join('')}</select>` }])}</div>
-    <div class="card" style="margin-top:14px"><h2>${t('The 22 app ideas – readiness', 'الـ 22 فكرة – الجاهزية')}</h2>
-      ${table(d.readiness, [{ key: 'page', label: '#', n: 1 }, { key: 'idea', label: t('Idea', 'الفكرة') }, { key: 'status', label: t('Status', 'الحالة'), f: statusChip },
-        { key: 'why', label: t('Why', 'ليه') }, { key: 'unlock_with', label: t('Unlock with', 'يتفتح بـ') }])}</div>
-    <div class="card" style="margin-top:14px"><h2>${t('Data quality report', 'تقرير جودة الداتا')}</h2><p class="sub">${t('Business = a finding to act on · High = breaks an analysis · Medium = system gap · Unreliable = random field, nothing built on it',
-      'اكتشاف بزنس = لازم نتصرف · عالي = بيبوّظ تحليل · متوسط = فجوة في السيستم · حقل عشوائي = مش بنبني عليه حاجة')}</p>
-      ${table(d.dq, [{ key: 'id', label: 'ID' }, { key: 'table', label: t('Table', 'الجدول') }, { key: 'issue', label: t('Issue', 'المشكلة') }, { key: 'evidence', label: t('Evidence', 'الدليل') }, { key: 'severity', label: t('Severity', 'الخطورة'), f: sevChip }])}
-      <div style="margin-top:12px"><a class="btn small" href="/api/export/data_quality.csv">⬇️ CSV</a></div></div>`;
-  document.querySelectorAll('select[data-r]').forEach(s => s.onchange = async () => { await api('/api/gaps/' + s.dataset.r, { method: 'POST', body: { status: s.value } }); toast(t('Saved', 'اتحفظ')); });
-}
-
-async function pageAssistant() {
-  shell('assistant', t('Ask the data', 'اسأل الداتا'), t('Answers come only from Cottonil’s numbers, with a link to the page that proves them.', 'الإجابات من أرقام قطنيل بس، ومعاها لينك للصفحة اللي بتثبتها.'));
-  const qs = S.lang === 'ar' ? ['نعمل إيه الأول؟', 'المبيعات بتزيد ليه؟', 'الخصم بيبيع أكتر؟', 'المخزون فيه مشكلة؟', 'نشتري كام الربع الجاي؟', 'التسويق شغال؟']
-    : ['What should we do first?', 'Why do sales grow?', 'Do discounts sell more?', 'Is there a stock problem?', 'How much should we buy next quarter?', 'Does marketing work?'];
-  $('#page').innerHTML = `<div class="card"><div class="chat" id="chat"><div class="bubble bot">${t('Hi! Ask me about sales, profit, discounts, stock, purchasing, marketing, customers, branches, shipping, payroll or the data gaps.',
-    'أهلًا! اسألني عن المبيعات، الربح، الخصم، المخزون، الشراء، التسويق، العملاء، الفروع، الشحن، المرتبات أو ثغرات الداتا.')}</div></div>
-    <div class="suggest">${qs.map(q => `<button>${esc(q)}</button>`).join('')}</div>
-    <form class="ask" id="ask"><input name="q" placeholder="${t('Type a question…', 'اكتب سؤالك…')}" autocomplete="off"><button class="btn">${t('Ask', 'اسأل')}</button></form></div>`;
-  const ask = async q => {
-    if (!q.trim()) return;
-    const chat = $('#chat');
-    chat.insertAdjacentHTML('beforeend', `<div class="bubble me">${esc(q)}</div>`);
-    const r = await api('/api/assistant', { method: 'POST', body: { q, lang: S.lang } });
-    chat.insertAdjacentHTML('beforeend', `<div class="bubble bot">${esc(r.answer)}${r.link ? `<br><a href="#/${r.link}">${t('Open the page', 'افتح الصفحة')} →</a>` : ''}</div>`);
-    chat.scrollTop = chat.scrollHeight;
-  };
-  document.querySelectorAll('.suggest button').forEach(b => b.onclick = () => ask(b.textContent));
-  $('#ask').onsubmit = e => { e.preventDefault(); const i = e.target.q; ask(i.value); i.value = ''; };
-}
-
-/* ------------------------------------------------------------------ router */
-const PAGES = { home: pageHome, problems: pageProblems, purchase: pagePurchase, allocation: pageAllocation, discount: pageDiscount,
-  marketing: pageMarketing, shipping: pageShipping, actions: pageActions, gaps: pageGaps, assistant: pageAssistant };
-function route() {
-  if (!S.me) return renderLogin();
-  const id = (location.hash.replace('#/', '') || 'home').split('?')[0];
-  (PAGES[id] || pageHome)().catch(e => { if (e.message !== 'login') $('#page').innerHTML = `<div class="note">${esc(e.message)}</div>`; });
-}
-window.addEventListener('hashchange', route);
-(async () => { setDir(); try { S.me = await api('/api/me'); route(); } catch (e) { renderLogin(); } })();
+// ---------------------------------------------------------------- Monthly report
+page(/^#\/report$/, async (view) => {
+  const d = await api('/api/report');
+  const fy = d.fy[d.fy.length - 1], c = d.cycle, p = d.purchase, dist = d.distribution, mk = d.marketing;
+  const fq = Object.entries(d.forecast_quarter);
+  const actions = d.bridge.actions;
+  view.innerHTML = `<div class="page" style="max-width:980px">
+    ${head(t(`Monthly report · ${mon(d.month)}`, `تقرير الشهر · ${mon(d.month)}`), t(`Cottonil · manager board · generated ${d.generated}`, `قطنيل · لوحة المدير · اتعمل ${d.generated}`),
+      `<button class="btn" id="rsent">${I('check')} ${t('Mark as sent', 'علّم إنه اتبعت')}</button><button class="btn primary" onclick="window.print()">${I('print')} ${t('Print / PDF', 'طباعة / PDF')}</button>`)}
+    <div class="grid g4">
+      ${kpi(t('Net sales FY2026', 'صافي المبيعات FY2026'), N(big(fy.net_sales)), N(sign(fy.net_sales_g) + '%'))}
+      ${kpi(t('Real growth (pieces)', 'النمو الحقيقي'), N(sign(fy.units_g, 1) + '%'), t('pieces sold', 'القطع المتباعة'))}
+      ${kpi(t('Gross margin', 'الهامش'), N(nf(fy.margin_pct, 1) + '%'), '')}
+      ${kpi(t('Demand next 3 months', 'طلب الـ 3 شهور الجاية'), N(big(fq.reduce((a, x) => a + x[1], 0))), t('pieces', 'قطعة'))}
+    </div>
+    <div class="card mt"><h3>${t('This month’s cycle', 'دورة الشهر')} · ${N(`${c.done}/${c.items.length}`)}</h3>
+      ${c.items.map(i => `<div class="task ${i.done ? 'done' : ''}"><span class="st ${i.done ? 'done' : ''}">${i.done ? I('check') : ''}</span><div class="tx"><b>${esc(t(i.en, i.ar))}</b><span>${i.when ? N(i.when) : i.done ? t('done', 'اتعمل') : t('not yet', 'لسه')}</span></div></div>`).join('')}</div>
+    <div class="grid g2 mt">
+      <div class="card"><h3>${t('Purchase plan', 'خطة الشراء')}</h3>
+        ${p ? `<p class="sub">${t('saved', 'اتحفظت')} ${N(p.saved)} · ${t('service level', 'مستوى الخدمة')} ${N(p.service + '%')}</p>
+          <div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('Category', 'الفئة')}</th><th class="n">${t('Forecast', 'التوقّع')}</th><th class="n">${t('To buy', 'نشتري')}</th></tr></thead>
+          <tbody>${p.rows.slice(0, 8).map(r => `<tr><td>${esc(cat(r.category_en))}</td><td class="n">${nf(r.forecast)}</td><td class="n">${nf(r.to_buy)}</td></tr>`).join('')}</tbody>
+          <tfoot><tr><td>${t('Total (all 16)', 'الإجمالي (الـ 16 فئة)')}</td><td class="n">${nf(p.rows.reduce((a, r) => a + r.forecast, 0))}</td><td class="n">${nf(p.total)}</td></tr></tfoot></table></div>`
+          : `<p class="muted">${t('Not saved yet.', 'لسه ما اتحفظتش.')}</p>`}</div>
+      <div class="card"><h3>${t('Distribution', 'التوزيع')} · ${mon(d.month)}</h3>
+        ${dist ? `<div class="facts"><div><span>${t('Pieces to send', 'قطع هتتبعت')}</span><b class="num">${nf(dist.total)}</b></div><div><span>${t('Usual month', 'الشهر المعتاد')}</span><b class="num">${nf(dist.old)}</b></div>
+          <div><span>${t('Trips', 'نقلات')}</span><b class="num">${nf(dist.trips)}</b></div><div><span>${t('Transport saved', 'توفير النقل')}</span><b class="num">${big(dist.transport_saved)}</b></div></div>`
+          : `<p class="muted">${t('Not saved yet.', 'لسه ما اتحفظتش.')}</p>`}
+        <h3 class="mt">${t('Pricing', 'التسعير')}</h3>
+        <p class="sub">${t('Policy', 'السياسة')}: ${t('max discount', 'أقصى خصم')} ${N(nf(d.policy.max_discount) + '%')} · ${t('floor margin', 'أقل هامش')} ${N(nf(d.policy.floor_margin) + '%')}${d.policy.saved ? '' : ' · ' + t('default, not saved', 'افتراضية، ما اتحفظتش')}</p>
+        ${d.promos.length ? d.promos.map(x => `<div class="small">• ${esc(cat(x.category))} −${N(nf(x.discount) + '%')} · ${t(x.weeks + ' weeks', weeksAr(x.weeks))} · ${t('needs', 'محتاج')} ${N(sign(x.uplift_needed_pct) + '%')} ${t('sales to pay back', 'بيع زيادة عشان يغطي نفسه')}</div>`).join('') : `<p class="muted small">${t('No promotion test saved.', 'مفيش تجربة عرض متسجلة.')}</p>`}
+      </div>
+    </div>
+    <div class="grid g2 mt">
+      <div class="card"><h3>${t('Marketing', 'التسويق')}</h3>
+        ${mk ? `<p class="sub">${t('Monthly budget', 'ميزانية الشهر')} ${N(egp(mk.budget))} · ${t('paused in the test', 'متوقف في التجربة')} ${N(egp(mk.paused_budget))}</p>
+          ${mk.pairs.map(x => `<div class="small">• ${t('pause', 'نوقف')} ${esc(x.pause)} ↔ ${t('keep', 'نكمّل')} ${esc(x.keep)}</div>`).join('')}` : `<p class="muted">${t('Not saved yet.', 'لسه ما اتحفظتش.')}</p>`}</div>
+      <div class="card"><h3>${t('Where the extra profit comes from (a year)', 'الربح الزيادة جاي منين (في السنة)')}</h3>
+        <p class="sub">${t('from', 'من')} ${N(big(d.bridge.base))} ${t('to', 'لـ')} ${N(big(d.bridge.new))} ${t('EGP gross profit', 'جنيه إجمالي ربح')}</p>
+        ${actions.map(a => `<div class="task"><div class="tx"><b>${esc(t(a.action, a.action_ar))}</b></div><span>${N('+' + big(a.profit))}</span></div>`).join('')}</div>
+    </div>
+    <div class="card mt"><h3>${t('Alerts', 'التنبيهات')}</h3>${d.alerts.map(a => `<div class="task"><div class="tx"><b>${N(t(a.en, a.ar))}</b><span style="white-space:normal">${N(t(a.sub_en, a.sub_ar))}</span></div></div>`).join('')}</div>
+    ${Object.keys(d.notes).length ? `<div class="card mt"><h3>${t('Branch notes', 'ملاحظات الفروع')}</h3>${Object.entries(d.notes).map(([b, n]) => `<div class="task"><div class="tx"><b>${b}</b><span style="white-space:normal">${esc(n)}</span></div></div>`).join('')}</div>` : ''}
+  </div>`;
+  $('#rsent').onclick = async () => { await post('/api/checks', { item: 'report', done: true }); toast(t('Marked as sent', 'اتعلّم إنه اتبعت')); refreshToday(); };
+}, 'report');

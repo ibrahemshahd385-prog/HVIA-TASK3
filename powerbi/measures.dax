@@ -1,0 +1,48 @@
+// ===================== Cottonil – DAX measures (create them in a table called _Measures) =====================
+// Every measure matches a number in the notebooks and the Streamlit dashboard (FY = Oct–Sep).
+
+Net Sales = SUM ( fact_sales_line[net_line_EGP] )
+Gross Profit = SUM ( fact_sales_line[margin_EGP] )
+Gross Margin % = DIVIDE ( [Gross Profit], [Net Sales] )
+Pieces Sold = SUM ( fact_sales_line[quantity] )
+Orders = DISTINCTCOUNT ( fact_sales_line[sales_order_id] )
+Avg Order Value = DIVIDE ( [Net Sales], [Orders] )
+Price per Piece = DIVIDE ( [Net Sales], [Pieces Sold] )
+Discounts = SUM ( fact_sales_line[discount_line_EGP] )
+Discount % of Gross Profit = DIVIDE ( [Discounts], [Gross Profit] )
+Lines with Discount % = DIVIDE ( CALCULATE ( COUNTROWS ( fact_sales_line ), fact_sales_line[has_discount] = TRUE () ), COUNTROWS ( fact_sales_line ) )
+Pieces per Line (discounted) = CALCULATE ( AVERAGE ( fact_sales_line[quantity] ), fact_sales_line[has_discount] = TRUE () )
+Pieces per Line (no discount) = CALCULATE ( AVERAGE ( fact_sales_line[quantity] ), fact_sales_line[has_discount] = FALSE () )
+
+// ---- growth (put dim_date[fy] on the axis)
+Net Sales PY = CALCULATE ( [Net Sales], FILTER ( ALL ( dim_date[fy] ), dim_date[fy] = MAX ( dim_date[fy] ) - 1 ) )
+Net Sales Growth % = DIVIDE ( [Net Sales] - [Net Sales PY], [Net Sales PY] )
+Pieces PY = CALCULATE ( [Pieces Sold], FILTER ( ALL ( dim_date[fy] ), dim_date[fy] = MAX ( dim_date[fy] ) - 1 ) )
+Real Growth % (pieces) = DIVIDE ( [Pieces Sold] - [Pieces PY], [Pieces PY] )
+Price Growth % = DIVIDE ( 1 + [Net Sales Growth %], 1 + [Real Growth % (pieces)] ) - 1
+
+// ---- returns
+Refunds = SUM ( fact_return[refund_amount_EGP] )
+Refund % of Sales = DIVIDE ( [Refunds], [Net Sales] )
+
+// ---- distribution & purchasing
+Pieces Sent to Branches = SUM ( fact_transfer_line[quantity_units] )
+Sent per Sold = DIVIDE ( [Pieces Sent to Branches], [Pieces Sold] )
+Pieces Bought = SUM ( fact_po_line[quantity] )
+Bought per Sold = DIVIDE ( [Pieces Bought], [Pieces Sold] )
+Sent from Raw/Returns % = DIVIDE ( CALCULATE ( [Pieces Sent to Branches], fact_transfer_line[warehouse_kind] IN { "Raw materials", "Returns" } ), [Pieces Sent to Branches] )
+Stock Units (last month) = CALCULATE ( SUM ( fact_stock_month[closing_units] ), LASTDATE ( fact_stock_month[date] ) )
+Stock Value (last month) = CALCULATE ( SUM ( fact_stock_month[closing_stock_value_EGP] ), LASTDATE ( fact_stock_month[date] ) )
+
+// ---- marketing
+Marketing Spend = SUM ( fact_campaign[spend_EGP] )
+Claimed Orders = SUM ( fact_campaign[orders_attributed] )
+Claimed per Real Order = DIVIDE ( [Claimed Orders], [Orders] )
+Cost per Click = DIVIDE ( [Marketing Spend], SUM ( fact_campaign[clicks] ) )
+CTR % = DIVIDE ( SUM ( fact_campaign[clicks] ), SUM ( fact_campaign[impressions] ) )
+Spend % of Sales = DIVIDE ( [Marketing Spend], [Net Sales] )
+
+// ---- what-if (create parameters: Modeling > New parameter > Numeric range)
+// Stop Discounts % = GENERATESERIES(0, 100, 5)  default 75   ·   Marketing Cut % = GENERATESERIES(0, 50, 5)  default 25
+Profit from Stopping Discounts = [Discounts] * SELECTEDVALUE ( 'Stop Discounts %'[Stop Discounts %], 75 ) / 100
+Profit from Marketing Cut = [Marketing Spend] * SELECTEDVALUE ( 'Marketing Cut %'[Marketing Cut %], 25 ) / 100

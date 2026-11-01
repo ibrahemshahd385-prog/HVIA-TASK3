@@ -1,0 +1,23 @@
+﻿page,idea,status,why,unlock_with
+2,Executive Dashboard,Ready,"Sales, margin, growth and seasonality are consistent and close to the cent.",—
+3,Sales Performance Intelligence,Ready,"Real signals: growth, Nov–Dec and Mar–May peaks, Thu–Sat, category mix.",—
+4,Branch Performance Optimization,Not meaningful,All 80 branches sell within ±5%; 7% of orders before opening.,"Real branch sales, traffic, size (m²), opening dates"
+5,Inventory & Warehouse Intelligence,Partial,Stock is flat for 8 years; 9.3M pieces not accounted for.,"Physical stock count, transfer receipts"
+6,Customer Segmentation & Loyalty,Partial,19% of orders have no customer; one ID shops in ~7 branches; age/gender random.,Loyalty ID (phone) at the till
+7,Demand Forecasting & Product Planning,Ready,Built: AI forecast 21% more accurate than last year’s same month.,—
+8,Supply Chain & Logistics Visibility,Partial,"Statuses never close (in transit 6%, partial 33%); delivery days random.","Carrier scans, receipt dates"
+9,Procurement & Supplier Analytics,Partial,Quantities ~100× sales; supplier types and lead times random.,"Confirmed purchase units, supplier master"
+10,Returns & Quality Control,Partial,"Return rate is real (~1.6%), reasons are random (20% each).","Return reason form, QC defects"
+11,Sustainability & ESG Analytics,Not possible,"No energy, water, carbon or material data at all.","Utility bills, material sourcing data"
+12,New Store Expansion & Site Selection,Not possible,"No demographics, competitors or rent; branch sales are equal.","Census, competitor map, rents"
+13,Price Optimization & Promotion Intelligence,Partial,Built: discounts proven to add no pieces. Price elasticity cannot be estimated (prices only follow inflation).,Planned price tests
+14,Omnichannel Commerce & Digital Analytics,Partial,Online share frozen at 12.5%; no web/app traffic data.,"Web analytics, app events"
+15,Marketing ROI & Campaign Performance,Partial,"Campaigns claim ×45 the real orders; only spend, CTR and CPC are usable.","Holdout tests, UTM-tagged orders"
+16,Product Profitability & Margin Intelligence,Ready (flat),Cost is always 59% of price → margin 38% everywhere; only discounts move it.,Real landed cost per SKU
+17,Workforce Productivity & Store Operations,Not reliable,Roles assigned in rotation; payroll covers ≤225 of 640 people.,"HR org chart, full payroll, shifts"
+18,Smart Replenishment & Auto Allocation,Ready,"Built: allocation from the forecast, −55% pieces moved.",Stock count to subtract on-hand
+19,Customer Lifetime Value & Churn Prediction,Tested – rejected,Churn model AUC 0.50 = coin flip; CLV only descriptive.,Loyalty ID + a win-back test
+20,Visual Merchandising & Planogram Analytics,Not possible,"No store layout, display or shelf data.","Planograms, store audits"
+21,Loss Prevention & Shrinkage Control,Partial,Strong signal: 9.3M pieces sent to branches are neither sold nor on shelf.,"Stock count, CCTV/incident logs"
+22,Wholesale & Distributor Performance,Partial,98% of wholesale orders come from customers registered as retail.,Reseller flag and accounts
+23,AI-Powered Business Assistant,Ready,Built in the manager website: answers from the data with the source.,—

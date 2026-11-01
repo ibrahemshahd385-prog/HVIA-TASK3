@@ -4,6 +4,12 @@ Cottonil_project.zip
 data/
 *.zip
 
+# ---- Generated from the raw data (rebuild with: python core/build_clean.py) – company data, never pushed
+clean/
+*.pkl
+*.pkl.gz
+# website users, passwords (hashed), saved actions: local only (covered by data/ above)
+
 # ---- Python / Jupyter
 __pycache__/
 *.pyc
@@ -17,6 +23,10 @@ node_modules/
 # ---- Secrets (API keys) – never push these
 .env
 *.key
+
+# ---- local tools
+tools/__pycache__/
+Cottonil_project
 
 # ---- OS / editor
 .DS_Store

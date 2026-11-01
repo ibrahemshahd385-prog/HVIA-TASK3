@@ -1,0 +1,29 @@
+﻿id,area,table,issue,evidence,severity,action
+DQ01,Purchasing,purchase_order_items,Purchased units are ~100x the units sold,"339,452,167 bought vs 3,398,655 sold (100x)",Business,Ask the company which unit is used (piece / dozen / kg). Use PO data for comparisons only.
+DQ02,Purchasing,purchase_order_items,Quantity bought per SKU does not follow its sales,correlation per SKU = 0.011,Business,Replace with a demand-driven purchase plan (forecast + safety stock).
+DQ03,Distribution,inventory_transfer_items,Branches receive far more than they sell,"12,677,158 units sent vs 3,398,655 sold (3.7x)",Business,Allocate to branches by their real sales (demand-based allocation).
+DQ04,Distribution,inventory_transfers,Branches receive goods from the raw-material and returns warehouses,17% of units sent to branches,High,Only finished-goods / distribution warehouses should ship to branches.
+DQ05,Sales,sales_order_items,Discounts do not increase the quantity sold,54% of lines discounted; avg qty 2.99 vs 2.98,Business,Stop random discounts; run discounts only as measured tests.
+DQ06,Marketing,marketing_campaigns,Campaigns claim far more orders than exist,"24,106,747 attributed vs 540,000 real orders (44.6x)",High,"Judge campaigns by cost per click / CTR and by holdout tests, never by attributed orders."
+DQ07,Branches,branches / sales_orders,Orders dated before the branch opened,"38,040 orders (7.0%), 18.3M EGP",Medium,Confirm the real opening dates with the company; keep the orders.
+DQ08,Branches,sales_orders,All branches sell almost the same,"store orders per branch 4,699 – 5,011",Unreliable,No branch ranking or location decision is built on this data.
+DQ09,Delivery,delivery_shipments,"""Delayed"" status is not linked to delivery time","428 'Delayed' delivered in ≤1 day; 13,512 'on time' took 7 days",Unreliable,No delivery-delay KPI until the carrier data is fixed.
+DQ10,Delivery,delivery_shipments,Delivery time is the same for every governorate,3.93 – 4.05 days (Cairo = Aswan),Unreliable,Collect real carrier scan dates.
+DQ11,Delivery,delivery_shipments,"Free shipping is given at random, even on very small orders",14% free overall; 14% for the smallest 25% of orders,Business,Free shipping only above a minimum order value.
+DQ12,Payments,sales_payments,"Every payment is on the order day, even cash on delivery",100% same day,Unreliable,Payments table is a copy of orders: no cash-collection analysis.
+DQ13,Purchasing,purchase_orders,"""Partial receipt"" never closes","33% partial in every year, even 2018",Unreliable,Not reported as late deliveries.
+DQ14,Distribution,inventory_transfers,"""In transit"" never closes","6% in transit + 2% partial, every year since 2018",Unreliable,Not reported as stuck transfers.
+DQ15,Distribution,inventory_transfers,Transport cost is random (7 fixed values),7 distinct values; same cost for any distance,Medium,"Use the count of transfers, not the cost per trip, for savings."
+DQ16,Inventory,monthly_stock,Monthly stock does not move with what came in and went out,total closing stock 1.64M – 1.91M units for 8 years,High,Ask which is right: stock snapshots or transfers + sales. Stock is used for shares only.
+DQ17,People,employees,Salary does not depend on the job,"avg salary by role 11,539 – 12,487 EGP; area manager < cashier",Unreliable,No salary benchmarking until HR data is fixed.
+DQ18,People,employees,"Roles are assigned in rotation: half the branches have no manager, half no cashier","40 branches without a store manager, 40 without a cashier",High,Ask HR for the real org chart.
+DQ19,People,payroll,Payroll is incomplete,10 of 640 employees paid in the last month,High,Payroll totals are not used for cost analysis.
+DQ20,Costs,operating_expenses,Rent is missing in most months for each branch,each branch has rent in 39 of 97 months on average (25–64),Medium,Ask finance for the full rent ledger.
+DQ21,Costs,operating_expenses / marketing_campaigns,Marketing cost in the expenses ledger ≠ campaign spend,11.8M EGP in expenses vs 219.5M in campaigns,High,One source of truth for marketing spend (finance ledger).
+DQ22,Purchasing,suppliers,Supplier type does not match what they supply,"10 supplier types, all supplying finished garments",Medium,Clean the supplier master.
+DQ23,Imports,import_shipments,Import freight does not depend on container or country,"40FT avg 6,171 USD vs 20FT 6,138 USD",Unreliable,No landed-cost model until real freight invoices are available.
+DQ24,Imports,import_shipments,Import value is far larger than all sales,450M USD imported vs 0.84B EGP sales,High,Ask the company what the import rows represent.
+DQ25,Factories,factories,Factories are not linked to any other table,no factory_id anywhere,Medium,Production / factory apps cannot be built until production data exists.
+DQ26,Products,public catalog,Products on the website never appear in sales,99 of 238 public products,Medium,Ask if they are new products.
+DQ27,Returns,sales_returns,Return reasons are spread evenly (random),"5 reasons, each 20%–20%",Unreliable,Only the total return rate is used; reasons need a real capture form.
+DQ28,Customers,customers / sales_orders,One customer ID shops in many branches and governorates,customers with 5+ store visits used 7.3 different branches on average,High,Loyalty ID at the till (phone number) before any personalisation.

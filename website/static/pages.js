@@ -73,7 +73,7 @@ page(/^#\/purchase\/order\/(\w+)$/, async (view, q, id) => {
   d.lines.forEach(l => (groups[l.category_en] = groups[l.category_en] || []).push(l));
   view.innerHTML = `<div class="page" style="max-width:980px">
     <a class="back no-print" href="#/purchase">${I('back')} ${t('Purchase plan', 'خطة الشراء')}</a>
-    ${head(t(`Purchase order PO-${id.toUpperCase()}`, `أمر شراء PO-${id.toUpperCase()}`), t('Cottonil · generated from the saved purchase plan', 'قطنيل · طالع من خطة الشراء المحفوظة'),
+    ${head(t(`Purchase order PO-${id.toUpperCase()}`, `أمر شراء PO-${id.toUpperCase()}`), t('Cottonil · generated from the saved purchase plan', 'قطونيل · طالع من خطة الشراء المحفوظة'),
       `<a class="btn" href="/api/purchase/order/${id}?format=csv">${I('download')} CSV</a><button class="btn primary" onclick="window.print()">${I('print')} ${t('Print', 'طباعة')}</button>`)}
     <div class="card"><div class="facts" style="margin:0">
       <div><span>${t('Order no.', 'رقم الأمر')}</span><b class="num" style="white-space:nowrap">PO-${id.toUpperCase()}</b></div><div><span>${t('Date', 'التاريخ')}</span><b class="num">${esc(p.saved)}</b></div>
@@ -300,11 +300,12 @@ const SORTS = [['gap', 'Pieces not accounted for', 'قطع مش متحسوبة']
 page(/^#\/branches$/, async (view, q) => {
   const d = S.cache.branches || (S.cache.branches = await api('/api/branches'));
   const B = d.branches;
+  const countDone = Boolean(S.today && S.today.cycle && S.today.cycle.items.find(x => x.id === 'count')?.done);
   const st = { s: '', gov: q.get('gov') || '', flag: q.get('flag') || '', sort: q.get('sort') || 'gap' };
   const govs = [...new Set(B.map(b => b.governorate_ar))].sort((a, b) => B.filter(x => x.governorate_ar === b).length - B.filter(x => x.governorate_ar === a).length);
   const maxGap = Math.max(...B.map(b => b.stock_gap));
   view.innerHTML = `<div class="page">
-    ${head(t('Branches', 'الفروع'), t(`${B.length} branches in ${govs.length} governorates · open any branch for its profile`, `${B.length} فرع في ${govs.length} محافظة · افتح أي فرع عشان ملفه`), `<a class="btn" href="/api/branches?format=csv">${I('download')} CSV</a>`)}
+    ${head(t('Branches', 'الفروع'), t(`${B.length} branches in ${govs.length} governorates · open any branch for its profile`, `${B.length} فرع في ${govs.length} محافظة · افتح أي فرع عشان ملفه`), `<button class="btn ${countDone ? 'teal' : ''}" id="bmark-count">${I('check')} ${countDone ? t('Physical count completed', 'تم الجرد الفعلي ✓') : t('Mark physical count as done', 'علّم على إتمام الجرد الفعلي')}</button><a class="btn" href="/api/branches?format=csv">${I('download')} CSV</a>`)}
     <div class="card"><div class="controls">
       <label class="ask" style="max-width:260px">${I('search')}<input id="bs" placeholder="${t('Branch name or code', 'اسم الفرع أو الكود')}"></label>
       <div class="field"><label>${t('Governorate', 'المحافظة')}</label><select id="bgov"><option value="">${t('All', 'الكل')}</option>${govs.map(g => `<option ${g === st.gov ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select></div>

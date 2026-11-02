@@ -5,6 +5,15 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// ---------------------------------------------------------------- dark mode
+function applyDark(on) {
+  document.documentElement.classList.toggle('dark', on);
+  try { localStorage.setItem('dark', on ? '1' : '0'); } catch(e) {}
+}
+function isDark() { try { return localStorage.getItem('dark') === '1'; } catch(e) { return false; } }
+applyDark(isDark());
+
+
 // ---------------------------------------------------------------- numbers & names
 const nf = (v, d = 0) => (v == null || isNaN(v) ? '–' : Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }));
 // numbers inside Arabic text keep their own left-to-right order (dates, %, ×, signs)
@@ -62,6 +71,10 @@ const ICONS = {
   target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
   list: '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
 };
+// add moon/sun icons
+ICONS.moon = '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>';
+ICONS.sun = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>';
+
 const I = (name, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
 
 // ---------------------------------------------------------------- api, toast, modal, csv
@@ -122,7 +135,7 @@ function setLang(l) {
   try { localStorage.setItem('lang', l); } catch (e) { /* private window */ }
   document.documentElement.lang = l;
   document.documentElement.dir = l === 'ar' ? 'rtl' : 'ltr';
-  document.title = t('Cottonil · Manager board', 'قطنيل · لوحة المدير');
+  document.title = t('Cottonil · Manager board', 'قطونيل · لوحة المدير');
 }
 
 function renderLogin() {
@@ -130,7 +143,7 @@ function renderLogin() {
   $('#app').innerHTML = `
   <div class="login">
     <div class="login-art">
-      <div class="brand"><div class="mark">ق</div><div><b style="color:#fff">${t('Cottonil', 'قطنيل')}</b><span style="color:#C9D4E6">${t('Manager board', 'لوحة المدير')}</span></div></div>
+      <div class="brand"><div class="mark">ق</div><div><b style="color:#fff">${t('Cottonil', 'قطونيل')}</b><span style="color:#C9D4E6">${t('Manager board', 'لوحة المدير')}</span></div></div>
       <div>
         <h1>${t('Run the month from one place.', 'إدارة الشهر من مكان واحد.')}</h1>
         <p>${t('Every number comes from the company data, and every page ends with something you can use: a purchase order, a pick list, a budget.',
@@ -184,9 +197,10 @@ function renderShell() {
   $('#app').innerHTML = `
   <div class="shell">
     <aside class="side" id="side">
-      <div class="brand"><div class="mark">ق</div><div><b>${t('Cottonil', 'قطنيل')}</b><span>${t('Manager board', 'لوحة المدير')}</span></div></div>
+      <div class="brand"><div class="mark">ق</div><div><b>${t('Cottonil', 'قطونيل')}</b><span>${t('Manager board', 'لوحة المدير')}</span></div></div>
       <nav class="nav">${NAV.map(([id, ic, en, ar]) => id === '_' ? `<div class="nav-label">${t(en, ar)}</div>` : `<a href="#/${id}" data-nav="${id}">${I(ic)}<span>${t(en, ar)}</span></a>`).join('')}</nav>
       <div class="side-foot">
+        <button id="bdark">${isDark() ? I('sun') + ' ' + t('Light mode','الوضع الفاتح') : I('moon') + ' ' + t('Dark mode','الوضع الداكن')}</button>
         <button id="blang">${I('globe')} ${t('العربية', 'English')}</button>
         <button id="bpass">${I('key')} ${t('Change password', 'تغيير كلمة السر')}</button>
         <button id="bout">${I('logout')} ${t('Sign out', 'خروج')}</button>
@@ -205,6 +219,7 @@ function renderShell() {
     </div>
   </div>`;
   $('#blang').onclick = () => { setLang(S.lang === 'ar' ? 'en' : 'ar'); renderShell(); route(); refreshToday(); };
+  $('#bdark').onclick = () => { applyDark(!isDark()); renderShell(); route(); refreshToday(); };
   $('#bout').onclick = async () => { await post('/api/logout'); S.me = null; renderLogin(); };
   $('#bpass').onclick = () => passwordModal(false);
   $('#bmenu').onclick = () => $('#side').classList.toggle('open');
@@ -298,9 +313,12 @@ page(/^#\/today$/, async (view) => {
           <p class="sub" style="margin:0">${t(`${c.done} of ${c.items.length} done · each item opens the page that does it`, `${c.done} من ${c.items.length} اتعملوا · كل بند بيفتح الصفحة اللي بتعمله`)}</p></div></div>
         <div id="tasks">${c.items.map(i => `
           <div class="task ${i.done ? 'done' : ''}">
-            ${i.auto ? `<span class="st ${i.done ? 'done' : ''}">${i.done ? I('check') : ''}</span>` : `<button class="st ${i.done ? 'done' : ''}" data-check="${i.id}" data-done="${i.done ? 1 : 0}" title="${t('mark', 'علّم')}">${i.done ? I('check') : ''}</button>`}
+            ${i.auto ? `<span class="st ${i.done ? 'done' : ''}">${i.done ? I('check') : ''}</span>` : `<button class="st ${i.done ? 'done' : ''}" data-check="${i.id}" data-done="${i.done ? 1 : 0}" title="${t('Click to toggle check', 'اضغط لتبديل حالة الإنجاز')}">${i.done ? I('check') : ''}</button>`}
             <div class="tx"><b>${N(t(i.en, i.ar))}</b><span>${i.when ? t('saved ', 'اتحفظت ') + N(i.when) : N(t(i.hint_en, i.hint_ar))}</span></div>
-            <a class="btn sm ${i.done ? '' : 'primary'}" href="${i.link}">${i.done ? t('View', 'عرض') : t('Open', 'افتح')}</a>
+            <div style="display:flex; gap:6px; align-items:center;">
+              ${!i.auto ? `<button class="btn sm ${i.done ? 'teal' : ''}" data-check="${i.id}" data-done="${i.done ? 1 : 0}">${i.done ? I('check') + ' ' + t('Done', 'تمت') : I('check') + ' ' + t('Mark done', 'علّم كمكتمل')}</button>` : ''}
+              <a class="btn sm ${i.done ? '' : 'primary'}" href="${i.link}">${i.done ? t('View', 'عرض') : t('Open', 'افتح')}</a>
+            </div>
           </div>`).join('')}</div>
       </div>
       <div class="card"><h3>${t('Alerts from the numbers', 'تنبيهات من الأرقام')}</h3><p class="sub">${t('They change when the data changes.', 'بتتغير لما الداتا تتغير.')}</p>${alertsHTML(d.alerts)}</div>
@@ -333,7 +351,7 @@ const SUGG = [['What should we do this month?', 'نعمل إيه الشهر ده
 page(/^#\/assistant$/, async (view, q) => {
   view.innerHTML = `<div class="page" style="max-width:900px">
     <div class="card chat">
-      <div class="chat-head"><div class="bot">${I('spark')}</div><div><h3>${t('Khayt', 'خيط')}</h3><p class="sub" style="margin:0">${t('Answers from Cottonil’s numbers and opens the right page.', 'بيجاوب من أرقام قطنيل ويفتحلك الصفحة الصح.')}</p></div></div>
+      <div class="chat-head"><div class="bot">${I('spark')}</div><div><h3>${t('Khayt', 'خيط')}</h3><p class="sub" style="margin:0">${t('Answers from Cottonil’s numbers and opens the right page.', 'بيجاوب من أرقام قطونيل ويفتحلك الصفحة الصح.')}</p></div></div>
       <div class="msgs" id="msgs"></div>
       <div class="sugg">${SUGG.map(s => `<button data-q="${esc(t(s[0], s[1]))}">${esc(t(s[0], s[1]))}</button>`).join('')}</div>
       <form class="chat-in" id="cf"><input class="input" id="cq" placeholder="${t('Ask about a branch, a category, a governorate, a month…', 'اسأل عن فرع، فئة، محافظة، شهر…')}" autocomplete="off"><button class="btn primary">${I('send', 'flip')}</button></form>
@@ -368,7 +386,7 @@ page(/^#\/report$/, async (view) => {
   const fq = Object.entries(d.forecast_quarter);
   const actions = d.bridge.actions;
   view.innerHTML = `<div class="page" style="max-width:980px">
-    ${head(t(`Monthly report · ${mon(d.month)}`, `تقرير الشهر · ${mon(d.month)}`), t(`Cottonil · manager board · generated ${d.generated}`, `قطنيل · لوحة المدير · اتعمل ${d.generated}`),
+    ${head(t(`Monthly report · ${mon(d.month)}`, `تقرير الشهر · ${mon(d.month)}`), t(`Cottonil · manager board · generated ${d.generated}`, `قطونيل · لوحة المدير · اتعمل ${d.generated}`),
       `<button class="btn" id="rsent">${I('check')} ${t('Mark as sent', 'علّم إنه اتبعت')}</button><button class="btn primary" onclick="window.print()">${I('print')} ${t('Print / PDF', 'طباعة / PDF')}</button>`)}
     <div class="grid g4">
       ${kpi(t('Net sales FY2026', 'صافي المبيعات FY2026'), N(big(fy.net_sales)), N(sign(fy.net_sales_g) + '%'))}

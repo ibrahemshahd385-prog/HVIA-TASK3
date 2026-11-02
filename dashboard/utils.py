@@ -63,7 +63,12 @@ CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 html, body, [data-testid="stAppViewContainer"] { background: #F5F7FA; }
-[data-testid="stAppViewContainer"] * { font-family: 'Inter', 'IBM Plex Sans Arabic', 'Segoe UI', sans-serif; }
+[data-testid="stAppViewContainer"] *:not([data-testid="stIconMaterial"]):not([class*="material-symbols"]):not([class*="material-icons"]) {
+    font-family: 'Inter', 'IBM Plex Sans Arabic', 'Segoe UI', sans-serif;
+}
+[data-testid="stIconMaterial"], [class*="material-symbols"], [class*="material-icons"] {
+    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons' !important;
+}
 .block-container { padding-top: 1.2rem; max-width: 1240px; }
 #MainMenu, footer { visibility: hidden; }
 .ct-hero { padding: 6px 2px 10px; }
@@ -90,7 +95,12 @@ html, body, [data-testid="stAppViewContainer"] { background: #F5F7FA; }
 
 CSS_AR = """
 <style>
-[data-testid="stAppViewContainer"] * { font-family: 'IBM Plex Sans Arabic', 'Segoe UI', sans-serif; }
+[data-testid="stAppViewContainer"] *:not([data-testid="stIconMaterial"]):not([class*="material-symbols"]):not([class*="material-icons"]) {
+    font-family: 'IBM Plex Sans Arabic', 'Segoe UI', sans-serif;
+}
+[data-testid="stIconMaterial"], [class*="material-symbols"], [class*="material-icons"] {
+    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons' !important;
+}
 .ct-hero, .ct-kpis, .ct-note, .ct-caution, .ct-section, .ct-section-sub, .ct-story, .ct-foot,
 [data-testid="stMarkdownContainer"], [data-testid="stCaptionContainer"], [data-testid="stWidgetLabel"], [data-testid="stExpander"] summary { direction: rtl; text-align: right; }
 </style>"""

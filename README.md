@@ -3,7 +3,7 @@
 HVIA Task 3 · Business Intelligence & AI Applications · by **Shahd Ibrahim**
 
 > **The question:** Cottonil's sales grow every year – is it real growth, and where is profit leaking?
-> **السؤال:** مبيعات قطنيل بتزيد كل سنة – هل ده نمو حقيقي، والربح بيضيع فين؟
+> **السؤال:** مبيعات قطونيل بتزيد كل سنة – هل ده نمو حقيقي، والربح بيضيع فين؟
 
 ## The answer in one line
 **4 decisions could add ~18.9M EGP of gross profit a year (+17%)** – from 110.9M to 129.8M (FY2026) – and every number has its
